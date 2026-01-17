@@ -2469,12 +2469,26 @@ with tabs[8]:
         )
         w_options = w_map["T_WeekLabel"].tolist()
 
+        # ✅ NEW: When months selection changes, auto-select ALL weeks in that interval
+        _months_key = tuple(sorted(m_sel)) if m_sel else tuple()
+        _prev_months_key = st.session_state.get("_tend_prev_months_key", None)
+        months_changed = (_prev_months_key != _months_key)
+        st.session_state["_tend_prev_months_key"] = _months_key
+
+        # ✅ Sanitize previous week selections to avoid "value not in options" errors
+        prev_weeks = st.session_state.get("tend_mvw_weeks_multi", None)
+        if months_changed or prev_weeks is None:
+            st.session_state["tend_mvw_weeks_multi"] = w_options.copy()
+        else:
+            st.session_state["tend_mvw_weeks_multi"] = [w for w in prev_weeks if w in w_options]
+
         w_sel = st.multiselect(
             "Selecciona Semana(s) del mes (Tendencia Ejecutivo)",
             options=w_options,
             default=w_options,
             key="tend_mvw_weeks_multi",
         )
+
 
         if w_sel:
             df_f = df_f[df_f["T_WeekLabel"].isin(w_sel)].copy()
