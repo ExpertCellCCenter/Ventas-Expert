@@ -191,6 +191,34 @@ def month_key_to_name_es(ym: int) -> str:
     return str(ym)
 
 
+def add_bar_value_labels(fig: go.Figure) -> go.Figure:
+    """
+    Adds value labels to BAR traces ONLY when they don't already have text/texttemplate.
+    Keeps existing charts unchanged if they already define labels.
+    """
+    try:
+        for tr in getattr(fig, "data", []) or []:
+            if getattr(tr, "type", "") != "bar":
+                continue
+
+            # If the bar already has labels, don't touch it
+            has_text = tr.text is not None and np.size(tr.text) > 0
+            has_template = bool(getattr(tr, "texttemplate", "") or "")
+            if has_text or has_template:
+                continue
+
+            orient = getattr(tr, "orientation", None) or "v"
+            if orient == "h":
+                tr.update(texttemplate="%{x:,.0f}", textposition="outside", cliponaxis=False)
+            else:
+                tr.update(texttemplate="%{y:,.0f}", textposition="outside", cliponaxis=False)
+
+        fig.update_layout(uniformtext_minsize=10, uniformtext_mode="hide")
+    except Exception:
+        pass
+    return fig
+
+
 def apply_plotly_theme(fig: go.Figure) -> go.Figure:
     fig.update_layout(
         template=PLOTLY_TEMPLATE,
@@ -199,6 +227,7 @@ def apply_plotly_theme(fig: go.Figure) -> go.Figure:
         margin=dict(l=20, r=20, t=60, b=20),
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
     )
+    add_bar_value_labels(fig)
     return fig
 
 
@@ -1131,6 +1160,7 @@ with tabs[1]:
                     template=PLOTLY_TEMPLATE,
                 )
                 fig_mvw.update_layout(height=380, paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)")
+                add_bar_value_labels(fig_mvw)
                 st.plotly_chart(fig_mvw, width="stretch", key="t1_sem_mvw_bar")
 
                 st.markdown("### Comparativo día vs día (entre meses seleccionados) — Ventas")
@@ -1315,6 +1345,7 @@ with tabs[1]:
                         template=PLOTLY_TEMPLATE,
                     )
                     fig_dates.update_layout(height=360, paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)")
+                    add_bar_value_labels(fig_dates)
                     st.plotly_chart(fig_dates, width="stretch", key="t1_sem_mvw_interval_bar")
 
                     df_d1["H"] = pd.to_datetime(df_d1["M_DT"], errors="coerce").dt.hour
@@ -1346,6 +1377,7 @@ with tabs[1]:
                         template=PLOTLY_TEMPLATE,
                     )
                     fig_hour2.update_layout(height=380, paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)")
+                    add_bar_value_labels(fig_hour2)
                     st.plotly_chart(fig_hour2, width="stretch", key="t1_sem_mvw_interval_hour")
 
     # ✅ DOWNLOAD EXCEL (Semanas) — ADDED
@@ -1546,6 +1578,7 @@ with tabs[3]:
             figB.add_trace(go.Bar(x=sB["Fecha"], y=sB["Ventas"], name="Total Folios (Modo)"))
             figB.add_trace(go.Scatter(x=sB["Fecha"], y=[avgB] * len(sB), mode="lines", name="Promedio Diario Mes (Modo)"))
             figB.update_layout(title="Vista General de Ventas", height=340)
+            add_bar_value_labels(figB)
             apply_plotly_theme(figB)
             st.plotly_chart(figB, width="stretch", key=f"t3_mesB_{mes_comp}_{modo}")
 
@@ -1654,6 +1687,7 @@ with tabs[3]:
                         template=PLOTLY_TEMPLATE,
                     )
                     fig_mvw.update_layout(height=380, paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)")
+                    add_bar_value_labels(fig_mvw)
                     st.plotly_chart(fig_mvw, width="stretch", key="t3_mvw_bar")
 
                     st.markdown("### Comparativo día vs día (mes contra mes) — Ventas")
@@ -1835,6 +1869,7 @@ with tabs[3]:
                             template=PLOTLY_TEMPLATE,
                         )
                         fig_dates.update_layout(height=360, paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)")
+                        add_bar_value_labels(fig_dates)
                         st.plotly_chart(fig_dates, width="stretch", key="t3_mvw_interval_bar")
 
                         df_d1["H"] = pd.to_datetime(df_d1["M_DT"], errors="coerce").dt.hour
@@ -2993,3 +3028,5 @@ with tabs[8]:
                     hide_index=True,
                     width="stretch",
                 )
+
+
