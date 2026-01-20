@@ -535,9 +535,110 @@ def distinct_days_with_sales(df: pd.DataFrame, exclude_sunday: bool = True) -> i
     return int(tmp["Fecha"].nunique())
 
 
+def _ventas_sin_domingo(df: pd.DataFrame) -> pd.DataFrame:
+    """Rows excluding Sundays (used ONLY for average calculations)."""
+    if df.empty:
+        return df
+    fecha_dt = pd.to_datetime(df["Fecha"], errors="coerce")
+    wd = fecha_dt.dt.weekday  # Mon=0 ... Sun=6
+    mask = fecha_dt.notna() & (wd != 6)  # exclude Sunday
+    return df.loc[mask].copy()
+
+
+def _dias_equivalentes_lun_sab(df: pd.DataFrame) -> float:
+    """
+    Working-day equivalent count:
+      - Mon-Fri = 1 day
+      - Saturday = 0.5 day
+      - Sunday excluded (should not be present if you use _ventas_sin_domingo)
+    """
+    if df.empty:
+        return 0.0
+
+    fecha_dt = pd.to_datetime(df["Fecha"], errors="coerce")
+    fecha_dt = fecha_dt[fecha_dt.notna()]
+    if fecha_dt.empty:
+        return 0.0
+
+    # unique calendar days present in data (avoid counting multiple sales same day)
+    unique_days = pd.to_datetime(pd.Series(fecha_dt.dt.normalize().unique()))
+    if unique_days.empty:
+        return 0.0
+
+    wd_u = pd.DatetimeIndex(unique_days).weekday  # array of weekdays
+    mon_fri = int(np.sum(wd_u <= 4))
+    sat = int(np.sum(wd_u == 5))
+    return float(mon_fri + 0.5 * sat)
+
+
 def promedio_diario(df: pd.DataFrame) -> float:
-    d = distinct_days_with_sales(df, exclude_sunday=True)
-    return (total_folios(df) / d) if d else np.nan
+    """
+    ✅ Average rules:
+      - Sunday sales DO NOT count in average
+      - Saturday counts as 0.5 working day (2 Saturdays = 1 full day)
+      - Totals (Total de Ventas) are NOT affected elsewhere
+    """
+    if df.empty:
+        return np.nan
+
+    df_avg = _ventas_sin_domingo(df)  # exclude Sunday sales from numerator
+    ventas_avg = int(df_avg.shape[0])
+
+    dias_eq = _dias_equivalentes_lun_sab(df_avg)  # Mon-Fri=1, Sat=0.5
+    return (ventas_avg / dias_eq) if dias_eq else np.nan
+
+
+def weekly_series(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Weekly series where:
+      - Bar (Ventas) = TOTAL sales including Sundays
+      - Line (PromDiarioSemana) = average excluding Sundays + Saturday=0.5 day
+    """
+    if df.empty:
+        return pd.DataFrame(columns=["SemanaISO", "WeekKey", "Ventas", "VentasNoDomingo", "PromDiarioSemana", "DiasSemanaEq"])
+
+    # TOTAL weekly sales (includes Sundays) -> for the BAR
+    ventas_total = (
+        df.groupby(["WeekKey", "SemanaISO"], as_index=False)
+        .size()
+        .rename(columns={"size": "Ventas"})
+    )
+
+    # Data for AVERAGE (exclude Sundays)
+    tmp = df.copy()
+    tmp["_Fecha_dt"] = pd.to_datetime(tmp["Fecha"], errors="coerce")
+    tmp = tmp[tmp["_Fecha_dt"].notna()].copy()
+    tmp["_wd"] = tmp["_Fecha_dt"].dt.weekday
+
+    tmp_avg = tmp[tmp["_wd"] != 6].copy()  # exclude Sunday rows for average numerator/denominator
+
+    # Weekly sales excluding Sunday -> numerator for average
+    ventas_no_dom = (
+        tmp_avg.groupby(["WeekKey", "SemanaISO"], as_index=False)
+        .size()
+        .rename(columns={"size": "VentasNoDomingo"})
+    )
+
+    # Weighted equivalent days per week: Mon-Fri=1, Sat=0.5
+    days_unique = tmp_avg.drop_duplicates(["WeekKey", "_Fecha_dt"])[["WeekKey", "_Fecha_dt", "_wd"]].copy()
+    days_unique["w"] = np.where(days_unique["_wd"] == 5, 0.5, 1.0)
+    dias_eq = (
+        days_unique.groupby("WeekKey", as_index=False)["w"]
+        .sum()
+        .rename(columns={"w": "DiasSemanaEq"})
+    )
+
+    out = ventas_total.merge(ventas_no_dom, on=["WeekKey", "SemanaISO"], how="left")
+    out = out.merge(dias_eq, on="WeekKey", how="left")
+
+    out["VentasNoDomingo"] = out["VentasNoDomingo"].fillna(0).astype(int)
+    out["PromDiarioSemana"] = out["VentasNoDomingo"] / out["DiasSemanaEq"].replace({0: np.nan})
+
+    return out.sort_values("WeekKey")
+
+
+
+
 
 
 def max_folios_dia(df: pd.DataFrame) -> int:
@@ -560,9 +661,6 @@ def daily_series(df: pd.DataFrame) -> pd.DataFrame:
     return out.sort_values("Fecha")
 
 
-def weekly_series(df: pd.DataFrame) -> pd.DataFrame:
-    if df.empty:
-        return pd.DataFrame(columns=["SemanaISO", "WeekKey", "Ventas", "PromDiarioSemana", "DiasSemana"])
 
     ventas_sem = (
         df.groupby(["WeekKey", "SemanaISO"], as_index=False)
