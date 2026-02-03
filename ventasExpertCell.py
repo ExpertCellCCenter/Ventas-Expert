@@ -858,8 +858,19 @@ if ventas.empty:
     st.error("No hay datos en el rango seleccionado.")
     st.stop()
 
-meses_disponibles = sorted(ventas["AñoMes"].dropna().unique().tolist())
+# ✅ Months should come from the selected date range (even if 0 sales)
+months_range = pd.period_range(start=start_dt.replace(day=1), end=end_dt.replace(day=1), freq="M")
+meses_disponibles = sorted([p.year * 100 + p.month for p in months_range])
+
+# Labels for all months in range
 mes_labels = {ym: month_key_to_name_es(int(ym)) for ym in meses_disponibles}
+
+# (Optional) still keep labels for any unexpected months from data
+for ym in ventas["AñoMes"].dropna().unique().tolist():
+    ym = int(ym)
+    if ym not in mes_labels:
+        mes_labels[ym] = month_key_to_name_es(ym)
+
 
 mes_sel = st.sidebar.selectbox(
     "Mes",
