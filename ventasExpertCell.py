@@ -469,18 +469,18 @@ def add_empleado_join(ventas: pd.DataFrame, empleados: pd.DataFrame) -> pd.DataF
 # ✅ EDIT METAS HERE (by hand)
 METAS_MANUAL_ROWS = [
     # --- Metas Centro ---
-    {"IDCenter": "CC1", "Nivel": "Centro", "Nombre": "EDUARDO AGUILA SANCHEZ", "Centro": "CC2", "Meta": 596},
-    {"IDCenter": "JV1", "Nivel": "Centro", "Nombre": "MARIA LUISA MEZA GOEL",  "Centro": "JV",  "Meta": 258},
+    {"IDCenter": "CC1", "Nivel": "Centro", "Nombre": "EDUARDO AGUILA SANCHEZ", "Centro": "CC2", "Meta": 575},
+    {"IDCenter": "JV1", "Nivel": "Centro", "Nombre": "MARIA LUISA MEZA GOEL",  "Centro": "JV",  "Meta": 266},
 
     # --- Metas Supervisor (JV) ---
-    {"IDCenter": "JV2", "Nivel": "Supervisor", "Nombre": "JORGE MIGUEL UREÑA ZARATE",        "Centro": "JV",  "Meta": 120},
-    {"IDCenter": "JV3", "Nivel": "Supervisor", "Nombre": "MARIA FERNANDA MARTINEZ BISTRAIN", "Centro": "JV",  "Meta": 138},
+    {"IDCenter": "JV2", "Nivel": "Supervisor", "Nombre": "JORGE MIGUEL UREÑA ZARATE",        "Centro": "JV",  "Meta": 148},
+    {"IDCenter": "JV3", "Nivel": "Supervisor", "Nombre": "MARIA FERNANDA MARTINEZ BISTRAIN", "Centro": "JV",  "Meta": 142},
 
     # --- Metas Supervisor (CC2) ---
-    {"IDCenter": "CC2", "Nivel": "Supervisor", "Nombre": "ALFREDO CABRERA PADRON",          "Centro": "CC2", "Meta": 156},
-    {"IDCenter": "CC4", "Nivel": "Supervisor", "Nombre": "REYNA LIZZETTE MARTINEZ GARCIA",  "Centro": "CC2", "Meta": 132},
-    {"IDCenter": "CC3", "Nivel": "Supervisor", "Nombre": "CARLOS ALBERTO AGUILAR CANO",  "Centro": "CC2", "Meta": 168},
-    {"IDCenter": "CC5", "Nivel": "Supervisor", "Nombre": "ALAN UZIEL SALAZAR AGUILAR",     "Centro": "CC2", "Meta": 140},
+    {"IDCenter": "CC2", "Nivel": "Supervisor", "Nombre": "ALFREDO CABRERA PADRON",          "Centro": "CC2", "Meta": 138},
+    {"IDCenter": "CC4", "Nivel": "Supervisor", "Nombre": "REYNA LIZZETTE MARTINEZ GARCIA",  "Centro": "CC2", "Meta": 137},
+    {"IDCenter": "CC3", "Nivel": "Supervisor", "Nombre": "CARLOS ALBERTO AGUILAR CANO",  "Centro": "CC2", "Meta": 132},
+    {"IDCenter": "CC5", "Nivel": "Supervisor", "Nombre": "ALAN UZIEL SALAZAR AGUILAR",     "Centro": "CC2", "Meta": 144},
 
     # ❌ JULIO is intentionally NOT included
 ]
