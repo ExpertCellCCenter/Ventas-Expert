@@ -469,18 +469,18 @@ def add_empleado_join(ventas: pd.DataFrame, empleados: pd.DataFrame) -> pd.DataF
 # ✅ EDIT METAS HERE (by hand)
 METAS_MANUAL_ROWS = [
     # --- Metas Centro ---
-    {"IDCenter": "CC1", "Nivel": "Centro", "Nombre": "EDUARDO AGUILA SANCHEZ", "Centro": "CC2", "Meta": 575},
-    {"IDCenter": "JV1", "Nivel": "Centro", "Nombre": "MARIA LUISA MEZA GOEL",  "Centro": "JV",  "Meta": 266},
+    {"IDCenter": "CC1", "Nivel": "Centro", "Nombre": "EDUARDO AGUILA SANCHEZ", "Centro": "CC2", "Meta": 534},
+    {"IDCenter": "JV1", "Nivel": "Centro", "Nombre": "MARIA LUISA MEZA GOEL",  "Centro": "JV",  "Meta": 258},
 
     # --- Metas Supervisor (JV) ---
-    {"IDCenter": "JV2", "Nivel": "Supervisor", "Nombre": "JORGE MIGUEL UREÑA ZARATE",        "Centro": "JV",  "Meta": 148},
-    {"IDCenter": "JV3", "Nivel": "Supervisor", "Nombre": "MARIA FERNANDA MARTINEZ BISTRAIN", "Centro": "JV",  "Meta": 142},
+    {"IDCenter": "JV2", "Nivel": "Supervisor", "Nombre": "JORGE MIGUEL UREÑA ZARATE",        "Centro": "JV",  "Meta": 128},
+    {"IDCenter": "JV3", "Nivel": "Supervisor", "Nombre": "MARIA FERNANDA MARTINEZ BISTRAIN", "Centro": "JV",  "Meta": 130},
 
     # --- Metas Supervisor (CC2) ---
-    {"IDCenter": "CC2", "Nivel": "Supervisor", "Nombre": "ALFREDO CABRERA PADRON",          "Centro": "CC2", "Meta": 138},
+    {"IDCenter": "CC2", "Nivel": "Supervisor", "Nombre": "ALFREDO CABRERA PADRON",          "Centro": "CC2", "Meta": 133},
     {"IDCenter": "CC4", "Nivel": "Supervisor", "Nombre": "REYNA LIZZETTE MARTINEZ GARCIA",  "Centro": "CC2", "Meta": 137},
-    {"IDCenter": "CC3", "Nivel": "Supervisor", "Nombre": "CARLOS ALBERTO AGUILAR CANO",  "Centro": "CC2", "Meta": 132},
-    {"IDCenter": "CC5", "Nivel": "Supervisor", "Nombre": "ALAN UZIEL SALAZAR AGUILAR",     "Centro": "CC2", "Meta": 144},
+    {"IDCenter": "CC3", "Nivel": "Supervisor", "Nombre": "CARLOS ALBERTO AGUILAR CANO",  "Centro": "CC2", "Meta": 126},
+    {"IDCenter": "CC5", "Nivel": "Supervisor", "Nombre": "ALAN UZIEL SALAZAR AGUILAR",     "Centro": "CC2", "Meta": 138},
 
     # ❌ JULIO is intentionally NOT included
 ]
@@ -3137,5 +3137,6 @@ with tabs[8]:
                     hide_index=True,
                     width="stretch",
                 )
+
 
 
