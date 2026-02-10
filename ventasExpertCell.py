@@ -1051,24 +1051,15 @@ def load_transito_counts(start_yyyymmdd: str, end_yyyymmdd: str) -> dict:
     WHERE
         [Tienda solicita] LIKE 'EXP ATT C CENTER%'
         AND (
-            -- normalize accents/case for robust matching
-            UPPER(
-                REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(
-                    LTRIM(RTRIM([Estatus])),
-                    'Á','A'),'É','E'),'Í','I'),'Ó','O'),'Ú','U'),'Ñ','N')
-            ) IN (
-                'EN ENTREGA',
-                'EN PREPARACION',
-                'BACK OFFICE',
-                'SOLICITADO',
-                'EN TRANSITO',
-                'EN TRANSITO.'   -- some systems add punctuation
+            -- ✅ Match dashboard2 Status == "En Transito"
+            LTRIM(RTRIM([Estatus])) IN ('En entrega', 'En preparacion', 'Solicitado', 'Back Office')
+            OR (
+                LTRIM(RTRIM([Estatus])) = 'Entregado'
+                AND (
+                    [Venta] IS NULL
+                    OR LTRIM(RTRIM(CAST([Venta] AS NVARCHAR(200)))) = ''
+                )
             )
-            OR UPPER(
-                REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(
-                    LTRIM(RTRIM([Estatus])),
-                    'Á','A'),'É','E'),'Í','I'),'Ó','O'),'Ú','U'),'Ñ','N')
-            ) LIKE '%TRANSIT%'
         )
     GROUP BY LTRIM(RTRIM([Vendedor]))
     """
@@ -2351,9 +2342,12 @@ with tabs[4]:
     # ---- ROSTER (employees who should appear even with 0 ventas) ----
     emp_roster = empleados.copy()
 
-    # ✅ ONLY ACTIVO ejecutivos
+    # ✅ Include ACTIVO + anyone with Programadas (EnTransito/Activadas) to match dashboard2
     emp_roster["Estatus"] = emp_roster["Estatus"].astype(str).str.strip().str.upper()
-    emp_roster = emp_roster[emp_roster["Estatus"] == "ACTIVO"].copy()
+    _keep_norms = set(list(transito_map.keys()) + list(activadas_map.keys()))
+    emp_roster["_EJ_NORM_TMP"] = emp_roster["Nombre"].astype(str).str.strip().apply(normalize_name)
+    emp_roster = emp_roster[(emp_roster["Estatus"] == "ACTIVO") | (emp_roster["_EJ_NORM_TMP"].isin(_keep_norms))].copy()
+    emp_roster.drop(columns=["_EJ_NORM_TMP"], inplace=True, errors="ignore")
 
     # Keep only executivos (avoid supervisors/coordinators)
     emp_roster["Puesto"] = emp_roster["Puesto"].astype(str).str.strip().str.upper()
@@ -2457,8 +2451,9 @@ with tabs[4]:
         meta_val = float(metas_map.get(ej_norm, 0) or 0)
         transito_val = int(transito_map.get(ej_norm, 0) or 0)
 
-        expected_to_date = (meta_val * (dias_hab_transcurridos / dias_hab_total)) if dias_hab_total > 0 else 0.0
-        gap_to_date = expected_to_date - ventas_reales
+        expected_to_date = (float(meta_val) / float(dias_hab_total)) * float(dias_hab_transcurridos) if dias_hab_total > 0 else 0.0
+        gap_to_date = float(expected_to_date) - float(ventas_reales)
+
 
         gap_to_meta = meta_val - ventas_reales
         daily_needed_avg = (meta_val / dias_hab_total) if dias_hab_total > 0 else 0.0
@@ -2518,9 +2513,12 @@ with tabs[4]:
 
         df_sup["Expected_To_Date"] = np.where(
             dias_hab_total > 0,
-            df_sup["Meta Supervisor"] * (dias_hab_transcurridos / dias_hab_total),
+            (df_sup["Meta Supervisor"].astype(float) / float(dias_hab_total)) * float(dias_hab_transcurridos),
             0.0,
         )
+
+        df_sup["Gap"] = df_sup["Expected_To_Date"].astype(float) - df_sup["Ventas"].astype(float)
+
 
         df_sup["Gap"] = df_sup["Expected_To_Date"] - df_sup["Ventas"]
         df_sup["Gap_Meta"] = df_sup["Meta Supervisor"] - df_sup["Ventas"]
@@ -2613,8 +2611,9 @@ with tabs[4]:
         meta_sum = float(df_c["Meta"].sum())
         ventas_sum = int(df_c["Ventas"].sum())
         monto_sum = float(df_c["Monto Vendido"].sum())
-        expected_sum_to_date = (meta_sum * (dias_hab_transcurridos / dias_hab_total)) if dias_hab_total > 0 else 0.0
-        gap_sum = expected_sum_to_date - ventas_sum
+        expected_sum_to_date = (float(meta_sum) / float(dias_hab_total)) * float(dias_hab_transcurridos) if dias_hab_total > 0 else 0.0
+        gap_sum = float(expected_sum_to_date) - float(ventas_sum)
+
         tr_sum = int(df_c["En Transito"].sum())
 
         total_row = {
@@ -2660,7 +2659,7 @@ with tabs[4]:
                     "Ventas": "{:,.0f}",
                     "Monto Vendido": "${:,.2f}",
                     "ARPU": "${:,.2f}",
-                    "Gap": "{:,.0f}",
+                    "Gap": "{:,.2f}",
                     "En Transito": "{:,.0f}",
                     "Dias Hab Mes": "{:,.1f}",
                     "Ventas Diarias Necesarias (Avg)": "{:,.2f}",
@@ -2741,7 +2740,7 @@ with tabs[4]:
                     "Ventas": "{:,.0f}",
                     "Monto_Vendido": "${:,.2f}",
                     "ARPU": "${:,.2f}",
-                    "Gap": "{:,.0f}",
+                    "Gap": "{:,.2f}",
                     "En_Transito": "{:,.0f}",
                     "Dias Hab Mes": "{:,.1f}",
                     "Dias Hab Restantes": "{:,.1f}",
@@ -3834,8 +3833,6 @@ with tabs[8]:
                     hide_index=True,
                     width="stretch",
                 )
-
-
 
 
 
