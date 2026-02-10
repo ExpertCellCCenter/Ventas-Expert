@@ -1096,6 +1096,45 @@ def load_transito_counts(start_yyyymmdd: str, end_yyyymmdd: str) -> dict:
         return {}
 
     
+
+@st.cache_data(ttl=600, show_spinner=False)
+def load_activadas_counts(start_yyyymmdd: str, end_yyyymmdd: str) -> dict:
+    """
+    Fetches count of 'Activadas' per executive using the SAME rule as dashboard2:
+      Activadas = Status == 'Entregado'
+    In dashboard2, Status=='Entregado' corresponds to:
+      Estatus == 'Entregado' AND Venta is NOT blank.
+    """
+    q = f"""
+    SELECT
+        LTRIM(RTRIM([Vendedor])) AS EJECUTIVO,
+        COUNT(*) AS Conteo
+    FROM reporte_programacion_entrega('empresa_maestra', 4, '{start_yyyymmdd}', '{end_yyyymmdd}')
+    WHERE
+        [Tienda solicita] LIKE 'EXP ATT C CENTER%'
+        AND LTRIM(RTRIM([Estatus])) = 'Entregado'
+        AND [Venta] IS NOT NULL
+        AND LTRIM(RTRIM(CAST([Venta] AS NVARCHAR(200)))) <> ''
+    GROUP BY LTRIM(RTRIM([Vendedor]))
+    """
+    try:
+        df = read_sql(q)
+        if df is None or df.empty:
+            return {}
+        df["EJ_NORM"] = df["EJECUTIVO"].astype(str).apply(normalize_name)
+
+        # (optional) same name fixes you apply in ventas / tránsito
+        df["EJ_NORM"] = df["EJ_NORM"].replace(
+            {
+                normalize_name("CESAR JAHACIEL ALONSO GARCIAA"): normalize_name("CESAR JAHACIEL ALONSO GARCIA"),
+                normalize_name("VICTOR BETANZO FUENTES"): normalize_name("VICTOR BETANZOS FUENTES"),
+            }
+        )
+
+        df["Conteo"] = pd.to_numeric(df["Conteo"], errors="coerce").fillna(0).astype(int)
+        return df.set_index("EJ_NORM")["Conteo"].to_dict()
+    except Exception:
+        return {}
 @st.cache_data(ttl=600, show_spinner=False)
 def load_metas_supervisor_from_excel() -> dict:
     """
@@ -2244,9 +2283,10 @@ with tabs[3]:
 
 # ======================================================
 # TAB 5: Detalle (Metas + Tránsito + Resumen Supervisor)
-#   ✅ FIX 1: evita StreamlitDuplicateElementKey (key único)
+#   ✅ FIX 1: evita StreamlitDuplicateElementKey (keys únicos en plotly/download)
 #   ✅ FIX 2: NO mostrar NINGÚN registro de estos "boss" (no supervisores)
 #   ✅ FIX 3: NO tocar/mutar EXCLUDED_SUP_NORMS global (solo TAB 5)
+#   ✅ FIX 4: ARREGLA INDENTACIÓN (tu bloque de plots estaba indentado de más)
 # ======================================================
 with tabs[4]:
     st.markdown(f"## Detalle General de Ventas — **{mes_labels[mes_sel]}**")
@@ -2271,16 +2311,17 @@ with tabs[4]:
     # 1) External data (Metas & Tránsito)
     # ------------------------------------------------
     metas_map = load_metas_from_csv()
+
     # Query tránsito only for the selected month window
     m_start, m_end = month_bounds(int(mes_sel))
     transito_map = load_transito_counts(m_start.strftime("%Y%m%d"), m_end.strftime("%Y%m%d"))
+    activadas_map = load_activadas_counts(m_start.strftime("%Y%m%d"), m_end.strftime("%Y%m%d"))
 
     metas_sup_map = load_metas_supervisor_from_excel()
 
     # ------------------------------------------------
     # 2) Working days (Sanity logic)
     # ------------------------------------------------
-    m_start, m_end = month_bounds(int(mes_sel))
     today = date.today()
 
     dias_hab_total = workable_equiv_between(m_start, m_end)
@@ -2335,9 +2376,9 @@ with tabs[4]:
         "CC2",
     )
 
-    roster = emp_roster.rename(
-        columns={"Nombre": "EJECUTIVO", "Jefe Inmediato": "Supervisor"}
-    )[["CentroKey", "Supervisor", "EJECUTIVO"]].copy()
+    roster = emp_roster.rename(columns={"Nombre": "EJECUTIVO", "Jefe Inmediato": "Supervisor"})[
+        ["CentroKey", "Supervisor", "EJECUTIVO"]
+    ].copy()
 
     roster["EJECUTIVO_norm"] = roster["EJECUTIVO"].apply(normalize_name)
     roster["Supervisor_norm"] = roster["Supervisor"].apply(normalize_name)
@@ -2356,7 +2397,15 @@ with tabs[4]:
     # ---- SALES STATS (only those who sold) ----
     if df_d.empty:
         stats = pd.DataFrame(
-            columns=["CentroKey", "Supervisor", "EJECUTIVO", "Ventas", "MontoVendido", "EJECUTIVO_norm", "Supervisor_norm"]
+            columns=[
+                "CentroKey",
+                "Supervisor",
+                "EJECUTIVO",
+                "Ventas",
+                "MontoVendido",
+                "EJECUTIVO_norm",
+                "Supervisor_norm",
+            ]
         )
     else:
         # ✅ extra safety: remove bosses from sales base too
@@ -2364,10 +2413,15 @@ with tabs[4]:
         df_d["Supervisor_norm"] = df_d["Supervisor"].apply(normalize_name)
         df_d = df_d[~df_d["Supervisor_norm"].isin(EXCLUDED_SUP_NORMS_TAB5)].copy()
 
-        stats = df_d.groupby(["CentroKey", "Supervisor", "EJECUTIVO"], as_index=False).agg(
-            Ventas=("FOLIO", "count"),
-            MontoVendido=("PRECIO", "sum"),
+        stats = (
+            df_d.groupby(["CentroKey", "Supervisor", "EJECUTIVO"], as_index=False)
+            .agg(
+                Ventas=("FOLIO", "count"),
+                MontoVendido=("PRECIO", "sum"),
+            )
+            .copy()
         )
+
         stats["EJECUTIVO"] = stats["EJECUTIVO"].astype(str).str.strip()
         stats["Supervisor"] = stats["Supervisor"].astype(str).str.strip()
         stats["EJECUTIVO_norm"] = stats["EJECUTIVO"].apply(normalize_name)
@@ -2396,7 +2450,7 @@ with tabs[4]:
         ej_name = str(r["EJECUTIVO"]).strip()
         ej_norm = normalize_name(ej_name)
 
-        ventas_reales = int(r["Ventas"])
+        ventas_reales = int(activadas_map.get(ej_norm, 0) or 0)
         monto = float(r["MontoVendido"])
         arpu_val = (monto / ventas_reales) if ventas_reales > 0 else 0.0
 
@@ -2508,6 +2562,7 @@ with tabs[4]:
                 pass
 
             return styles
+
         return _row_style
 
     def _style_sup(df_cols):
@@ -2535,6 +2590,7 @@ with tabs[4]:
                 pass
 
             return styles
+
         return _row_style
 
     # ------------------------------------------------
@@ -2620,8 +2676,6 @@ with tabs[4]:
     st.markdown("---")
     display_center_table("JV", "JV (Juárez)")
 
-    
-
     # ------------------------------------------------
     # 7) Supervisor summary tables (CC2 then JV)
     # ------------------------------------------------
@@ -2702,14 +2756,13 @@ with tabs[4]:
     st.markdown("---")
     display_supervisor_summary("JV", "JV (Juárez) — Supervisores")
 
-        # ------------------------------------------------
-    # ✅ PLOTS (keep same as old Tab 5): Donuts CC2 vs JV
+    # ------------------------------------------------
+    # 8) PLOTS: Donuts CC2 vs JV
     #    - % Monto Vendido
     #    - % ARPU
     # ------------------------------------------------
     st.markdown("---")
 
-    # Use the current TAB 5 computed table (df_detalle_full)
     monto_cc2 = 0.0
     monto_jv = 0.0
     ventas_cc2 = 0
@@ -2717,16 +2770,16 @@ with tabs[4]:
 
     if not df_detalle_full.empty:
         df_cc2_plot = df_detalle_full[df_detalle_full["CentroKey"] == "CC2"].copy()
-        df_jv_plot  = df_detalle_full[df_detalle_full["CentroKey"] == "JV"].copy()
+        df_jv_plot = df_detalle_full[df_detalle_full["CentroKey"] == "JV"].copy()
 
         monto_cc2 = float(df_cc2_plot["Monto Vendido"].sum()) if "Monto Vendido" in df_cc2_plot.columns else 0.0
-        monto_jv  = float(df_jv_plot["Monto Vendido"].sum())  if "Monto Vendido" in df_jv_plot.columns else 0.0
+        monto_jv = float(df_jv_plot["Monto Vendido"].sum()) if "Monto Vendido" in df_jv_plot.columns else 0.0
 
         ventas_cc2 = int(df_cc2_plot["Ventas"].sum()) if "Ventas" in df_cc2_plot.columns else 0
-        ventas_jv  = int(df_jv_plot["Ventas"].sum())  if "Ventas" in df_jv_plot.columns else 0
+        ventas_jv = int(df_jv_plot["Ventas"].sum()) if "Ventas" in df_jv_plot.columns else 0
 
     arpu_cc2_val = (monto_cc2 / ventas_cc2) if ventas_cc2 > 0 else 0.0
-    arpu_jv_val  = (monto_jv  / ventas_jv)  if ventas_jv  > 0 else 0.0
+    arpu_jv_val = (monto_jv / ventas_jv) if ventas_jv > 0 else 0.0
 
     pieL, pieR = st.columns(2, gap="large")
 
@@ -2748,17 +2801,16 @@ with tabs[4]:
         if fig_monto is None:
             st.info("Sin monto suficiente para graficar % Monto Vendido.")
         else:
-            st.plotly_chart(fig_monto, use_container_width=True, key=f"tab5_pie_monto_{mes_sel}")
+            st.plotly_chart(fig_monto, use_container_width=True, key=f"tab5_pie_monto_{mes_sel}_{start_yyyymmdd}_{end_yyyymmdd}")
 
     with pieR:
         if fig_arpu is None:
             st.info("Sin ARPU suficiente para graficar % ARPU.")
         else:
-            st.plotly_chart(fig_arpu, use_container_width=True, key=f"tab5_pie_arpu_{mes_sel}")
-
+            st.plotly_chart(fig_arpu, use_container_width=True, key=f"tab5_pie_arpu_{mes_sel}_{start_yyyymmdd}_{end_yyyymmdd}")
 
     # ------------------------------------------------
-    # 8) Download Excel (Detalle + Resumen)
+    # 9) Download Excel (Detalle + Resumen)
     # ------------------------------------------------
     if not df_detalle_full.empty:
         sheets = {"Detalle Ejecutivos": df_detalle_full.copy()}
@@ -2771,7 +2823,8 @@ with tabs[4]:
             file_name=f"TAB5_Detalle_{mes_sel}_{date.today():%Y%m%d}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             use_container_width=True,
-            key=f"dl_tab5_{mes_sel}_{start_yyyymmdd}_{end_yyyymmdd}_{str(center_sel)}_{str(sup_sel)}_{str(ej_sel)}",
+            # ✅ key realmente único (evita colisiones si cambias filtros rápido)
+            key=f"dl_tab5_{mes_sel}_{start_yyyymmdd}_{end_yyyymmdd}_{'-'.join(sorted(center_sel or []))}_{normalize_name('|'.join(sorted(sup_sel or [])))}_{normalize_name('|'.join(sorted(ej_sel or [])))}",
         )
 
 
@@ -3781,6 +3834,7 @@ with tabs[8]:
                     hide_index=True,
                     width="stretch",
                 )
+
 
 
 
