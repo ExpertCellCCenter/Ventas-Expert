@@ -1040,39 +1040,63 @@ def load_metas_from_csv() -> dict:
 @st.cache_data(ttl=600, show_spinner=False)
 def load_transito_counts(start_yyyymmdd: str, end_yyyymmdd: str) -> dict:
     """
-    Fetches count of orders 'En Tránsito' (and related pipeline statuses) per executive.
-    Robust to accents/case/variants in Estatus.
+    Fetches count of orders 'En Tránsito' (pipeline) per executive.
+    ✅ Robust match to dashboard2:
+       - Case-insensitive
+       - Accent-insensitive (preparación vs preparacion)
+       - Trims spaces
+       - Handles BackOffice variants
+       - Includes "En Transito" variants if they exist
+       - Keeps the rule:
+            En Transito = (Estatus in pipeline)
+                         OR (Estatus='Entregado' AND Venta is blank)
     """
     q = f"""
+    ;WITH x AS (
+        SELECT
+            LTRIM(RTRIM([Vendedor])) AS EJECUTIVO,
+            -- Normalize Estatus: trim + upper + accent-insensitive collation
+            UPPER(LTRIM(RTRIM(COALESCE([Estatus], '')))) COLLATE Latin1_General_CI_AI AS EST_NORM,
+            -- Normalize Venta: blank => NULL
+            NULLIF(LTRIM(RTRIM(CAST([Venta] AS NVARCHAR(200)))), '') AS VENTA_NORM
+        FROM reporte_programacion_entrega('empresa_maestra', 4, '{start_yyyymmdd}', '{end_yyyymmdd}')
+        WHERE [Tienda solicita] LIKE 'EXP ATT C CENTER%'
+    )
     SELECT
-        LTRIM(RTRIM([Vendedor])) AS EJECUTIVO,
+        EJECUTIVO,
         COUNT(*) AS Conteo
-    FROM reporte_programacion_entrega('empresa_maestra', 4, '{start_yyyymmdd}', '{end_yyyymmdd}')
+    FROM x
     WHERE
-        [Tienda solicita] LIKE 'EXP ATT C CENTER%'
-        AND (
-            -- ✅ Match dashboard2 Status == "En Transito"
-            LTRIM(RTRIM([Estatus])) IN ('En entrega', 'En preparacion', 'Solicitado', 'Back Office')
-            OR (
-                LTRIM(RTRIM([Estatus])) = 'Entregado'
-                AND (
-                    [Venta] IS NULL
-                    OR LTRIM(RTRIM(CAST([Venta] AS NVARCHAR(200)))) = ''
-                )
+        (
+            -- ✅ Pipeline statuses (match dashboard2)
+            EST_NORM IN (
+                'EN ENTREGA',
+                'EN PREPARACION',
+                'SOLICITADO',
+                'BACK OFFICE',
+                'BACKOFFICE',
+                'EN TRANSITO',
+                'EN TRÁNSITO'
             )
         )
-    GROUP BY LTRIM(RTRIM([Vendedor]))
+        OR
+        (
+            -- ✅ "Entregado" but NOT activated yet (Venta blank)
+            EST_NORM = 'ENTREGADO'
+            AND VENTA_NORM IS NULL
+        )
+    GROUP BY EJECUTIVO
+    ;
     """
     try:
         df = read_sql(q)
-
         if df is None or df.empty:
             return {}
 
         # normalize executive names same way you do everywhere
         df["EJ_NORM"] = df["EJECUTIVO"].astype(str).apply(normalize_name)
 
-        # (optional) same name fixes you apply in ventas
+        # same name fixes you apply in ventas / activadas
         df["EJ_NORM"] = df["EJ_NORM"].replace(
             {
                 normalize_name("CESAR JAHACIEL ALONSO GARCIAA"): normalize_name("CESAR JAHACIEL ALONSO GARCIA"),
@@ -1085,6 +1109,7 @@ def load_transito_counts(start_yyyymmdd: str, end_yyyymmdd: str) -> dict:
 
     except Exception:
         return {}
+
 
     
 
