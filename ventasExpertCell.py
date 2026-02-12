@@ -2853,20 +2853,104 @@ with tabs[4]:
 
 
 # ======================================================
-# TAB 6: Región
+# TAB 6: Región (Vista Universo Completo)
 # ======================================================
 with tabs[5]:
-    st.markdown(f"## Ventas por Región — **{mes_labels[mes_sel]}**")
+    st.markdown(f"## Distribución de Ventas por Región — **{mes_labels[mes_sel]}**")
+    st.caption("Nota: Se muestran todas las regiones existentes en la base de datos cargada, incluyendo aquellas con 0 ventas este mes.")
 
-    df_r = df_base.copy()
-    if df_r.empty:
-        st.info("Sin datos con los filtros actuales.")
+    # 1. Obtener el UNIVERSO de regiones (Catalogo)
+    # Usamos 'ventas' completo (sin filtros de fecha ni persona) para conocer todas las subregiones posibles
+    all_regions = ventas["SUBREGION"].dropna().unique()
+    df_universe = pd.DataFrame({"SUBREGION": all_regions})
+    
+    # Aseguramos limpieza
+    df_universe["SUBREGION"] = df_universe["SUBREGION"].astype(str).str.strip().str.upper()
+    df_universe = df_universe.drop_duplicates("SUBREGION").sort_values("SUBREGION")
+
+    # 2. Obtener VENTAS del mes seleccionado (Sin filtros de Centro/Supervisor)
+    df_month_sales = ventas[ventas["AñoMes"] == mes_sel].copy()
+    
+    # Agrupamos las ventas reales del mes
+    df_month_sales["SUBREGION"] = df_month_sales["SUBREGION"].fillna("SIN REGION").astype(str).str.strip().str.upper()
+    sales_counts = df_month_sales.groupby("SUBREGION", as_index=False).size().rename(columns={"size": "Ventas"})
+
+    # 3. Cruzar Universo con Ventas (Left Join)
+    # Esto asegura que aparezcan las regiones con 0 ventas
+    df_final = df_universe.merge(sales_counts, on="SUBREGION", how="left")
+    df_final["Ventas"] = df_final["Ventas"].fillna(0).astype(int)
+
+    # 4. Calcular Porcentajes
+    total_sales = df_final["Ventas"].sum()
+    df_final["%"] = np.where(total_sales > 0, df_final["Ventas"] / total_sales, 0.0)
+
+    # Ordenar: primero las que tienen ventas (descendente), luego alfabético
+    df_final = df_final.sort_values(["Ventas", "SUBREGION"], ascending=[False, True])
+
+    # 5. Visualización
+    if df_final.empty:
+        st.warning("No se encontraron regiones en la base de datos.")
     else:
-        reg = df_r.groupby("SUBREGION", as_index=False).size().rename(columns={"size": "Ventas"})
-        reg = reg.sort_values("Ventas", ascending=False)
-        fig = px.pie(reg, names="SUBREGION", values="Ventas", title="VENTAS POR REGIÓN", hole=0.25, template=PLOTLY_TEMPLATE)
-        fig.update_layout(paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)")
-        st.plotly_chart(fig, width="stretch", key="t5_region_pie")
+        c1, c2 = st.columns([0.65, 0.35], gap="large")
+
+        with c1:
+            # Gráfico de Dona
+            # Filtramos solo las que tienen ventas > 0 para el gráfico (para que no se vea saturado de ceros),
+            # pero la tabla de al lado sí mostrará todo.
+            df_plot = df_final[df_final["Ventas"] > 0].copy()
+            
+            if df_plot.empty:
+                st.info("No hay ventas registradas en ninguna región este mes.")
+            else:
+                fig = px.pie(
+                    df_plot, 
+                    names="SUBREGION", 
+                    values="Ventas", 
+                    title="Participación (Regiones con Venta)", 
+                    hole=0.45, 
+                    template=PLOTLY_TEMPLATE
+                )
+                fig.update_traces(textposition='inside', textinfo='percent+label')
+                fig.update_layout(
+                    paper_bgcolor="rgba(0,0,0,0)", 
+                    plot_bgcolor="rgba(0,0,0,0)",
+                    height=450,
+                    margin=dict(t=40, b=20, l=20, r=20),
+                    showlegend=False 
+                )
+                st.plotly_chart(fig, width="stretch", key="t5_region_pie_universe")
+
+        with c2:
+            st.markdown("#### Detalle Global")
+            
+            # Agregamos fila de TOTAL
+            reg_table_show = add_totals_row(
+                df_final, 
+                label_col="SUBREGION", 
+                totals={"Ventas": total_sales, "%": 1.0},
+                label="TOTAL"
+            )
+
+            # Mostramos la tabla completa (incluyendo ceros)
+            st.dataframe(
+                style_totals_bold(reg_table_show, label_col="SUBREGION")
+                .format({
+                    "Ventas": "{:,.0f}", 
+                    "%": "{:.1%}"
+                }),
+                hide_index=True,
+                use_container_width=True,
+                height=450
+            )
+
+        # Botón de descarga
+        st.download_button(
+            "⬇️ Descargar Todas las Regiones",
+            data=build_excel_bytes({"Todas_Regiones": reg_table_show}),
+            file_name=f"Regiones_Universo_{mes_sel}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            key="dl_region_universe"
+        )
 
 # ======================================================
 # TAB 7: TOPS
