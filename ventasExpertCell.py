@@ -1342,13 +1342,39 @@ with tabs[0]:
             width="stretch",
         )
 
-        # ✅ DOWNLOAD EXCEL (Global Mes) — ADDED
+        # ✅ DOWNLOAD EXCEL (Global Mes) — UPDATED (includes ALL ventas)
+
+        # 1️⃣ Full ventas detail (
+        ventas_full = df_base.copy()
+
+        # Optional: reorder / clean columns for export
+        cols_order = [
+            "FOLIO",
+            "Fecha",
+            "Hora",
+            "EJECUTIVO",
+            "Supervisor",
+            "CENTRO",
+            "CentroKey",
+            "PLAN",
+            "PRECIO",
+            "RENTA SIN IMPUESTOS",
+            "SUBREGION",
+            "ESTATUS",
+        ]
+        cols_order = [c for c in cols_order if c in ventas_full.columns]
+        ventas_full = ventas_full[cols_order]
+
+        # 2️⃣ Build sheets
         sheets_gm = {
+            "Todas las Ventas (Detalle)": ventas_full,  
             "Top dias (tabla)": top_days_show.copy(),
             "Serie diaria (grafica)": s.rename(columns={"Ventas": "Total de Ventas"}).copy(),
         }
+
         if sel_dates:
             sheets_gm["Seleccion (dia)"] = df_sel_day.copy()
+
 
         st.download_button(
             "⬇️ Descargar Excel (Global Mes)",
