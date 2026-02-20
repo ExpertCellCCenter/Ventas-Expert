@@ -1044,26 +1044,31 @@ def load_metas_from_csv() -> dict:
         return {}
     
 @st.cache_data(ttl=600, show_spinner=False)
-def load_combined_pipeline_data(start_yyyymmdd: str, end_yyyymmdd: str) -> tuple[dict, dict]:
+def load_html_dashboard_data(start_date: date, end_date: date) -> tuple[dict, dict]:
     """
-    Fetches Pipeline details AND calculates the True Monthly Back Office Base 
-    using the exact interval and parsing logic from the 'transito' dashboard.
+    1) Fetches pipeline based on sidebar dates.
+    2) Calculates True Monthly Back Office (Back Feb) using the wide 
+       PBI_START window to catch historical tickets, matching transito.py exactly.
     """
+    # Force a wide start date to catch old tickets that moved to BO this month
+    wide_start_str = "20251101" 
+    end_str = end_date.strftime("%Y%m%d")
+    
     q = f"""
     SELECT 
         LTRIM(RTRIM([Vendedor])) AS EJECUTIVO,
         LTRIM(RTRIM([Estatus])) AS Estatus,
         [Venta],
-        [Back Office]
-    FROM reporte_programacion_entrega('empresa_maestra', 4, '{start_yyyymmdd}', '{end_yyyymmdd}')
+        [Back Office],
+        [Fecha creacion]
+    FROM reporte_programacion_entrega('empresa_maestra', 4, '{wide_start_str}', '{end_str}')
     WHERE [Tienda solicita] LIKE 'EXP ATT C CENTER%'
     """
     try:
         df = read_sql(q)
         if df is None or df.empty:
             return {}, {}
-        
-        # Clean names and columns
+            
         df["EJ_NORM"] = df["EJECUTIVO"].astype(str).apply(normalize_name)
         df["Estatus_upper"] = df["Estatus"].astype(str).str.strip().str.upper()
         df["Venta_Vacia"] = df["Venta"].isna() | (df["Venta"].astype(str).str.strip() == "")
@@ -1071,6 +1076,11 @@ def load_combined_pipeline_data(start_yyyymmdd: str, end_yyyymmdd: str) -> tuple
         # ==========================================
         # 1. CALCULATE PIPELINE BREAKDOWN (Tránsito)
         # ==========================================
+        # Pipeline is filtered strictly by the Streamlit sidebar dates
+        df["Fecha_Creacion_DT"] = pd.to_datetime(df["Fecha creacion"], errors="coerce", dayfirst=True).dt.date
+        mask_pipeline = (df["Fecha_Creacion_DT"] >= start_date) & (df["Fecha_Creacion_DT"] <= end_date)
+        df_pipeline = df[mask_pipeline].copy()
+        
         def get_html_cat(row):
             e = row["Estatus_upper"]
             v_vacia = row["Venta_Vacia"]
@@ -1081,21 +1091,21 @@ def load_combined_pipeline_data(start_yyyymmdd: str, end_yyyymmdd: str) -> tuple
             if e == "ENTREGADO" and v_vacia: return "sinventa"
             return None
             
-        df["HTML_Cat"] = df.apply(get_html_cat, axis=1)
-        pipeline_df = df.dropna(subset=["HTML_Cat"])
+        df_pipeline["HTML_Cat"] = df_pipeline.apply(get_html_cat, axis=1)
+        pipeline_df = df_pipeline.dropna(subset=["HTML_Cat"])
+        
         pipeline_dict = {}
         if not pipeline_df.empty:
             pipeline_dict = pipeline_df.groupby(["EJ_NORM", "HTML_Cat"]).size().unstack(fill_value=0).to_dict('index')
-        
+            
         # ==========================================
-        # 2. CALCULATE TRUE BACK FEB (Back Office Intervalo)
+        # 2. CALCULATE TRUE BACK FEB (Monthly Back Office)
         # ==========================================
-        # A. Clean the Back Office string column
+        # Exactly matching the parse_backoffice_datetime logic from transito.py
         s = df["Back Office"].astype(str).str.strip()
         s = s.replace({"nan": "", "None": "", "NaT": ""})
         s = s.where(s != "", np.nan)
         
-        # B. Extract the timestamp exactly like transito.py
         if s.notna().any():
             pat = r"(\d{1,2}[/-]\d{1,2}[/-]\d{2,4}\s+\d{1,2}:\d{2}(?::\d{2})?)|(\d{4}[/-]\d{1,2}[/-]\d{1,2}\s+\d{1,2}:\d{2}(?::\d{2})?)"
             ext = s.astype(str).str.extract(pat)
@@ -1104,19 +1114,28 @@ def load_combined_pipeline_data(start_yyyymmdd: str, end_yyyymmdd: str) -> tuple
         else:
             s2 = s
             
-        # C. Convert to datetime and extract the date
-        bo_dt = pd.to_datetime(s2, errors="coerce", dayfirst=True)
+        dt_dayfirst = pd.to_datetime(s2, errors="coerce", dayfirst=True)
+        dt_monthfirst = pd.to_datetime(s2, errors="coerce", dayfirst=False)
+        
+        # Calculate Interval: 1st of the month -> end_date
+        month_start = end_date.replace(day=1)
+        w0 = pd.Timestamp(month_start)
+        w1 = pd.Timestamp(end_date) + pd.Timedelta(days=1) - pd.Timedelta(microseconds=1)
+        
+        in1 = dt_dayfirst.between(w0, w1)
+        in2 = dt_monthfirst.between(w0, w1)
+        
+        bo_dt = dt_dayfirst.copy()
+        bo_dt = bo_dt.where(~(in2 & ~in1), dt_monthfirst)
+        bo_dt = bo_dt.where(~(dt_dayfirst.isna() & dt_monthfirst.notna()), dt_monthfirst)
+        
         df["BO_Fecha"] = bo_dt.dt.date
         
-        # D. Convert Streamlit string parameters to Date objects
-        start_date = datetime.strptime(start_yyyymmdd, "%Y%m%d").date()
-        end_date = datetime.strptime(end_yyyymmdd, "%Y%m%d").date()
-        
-        # E. Apply Exact Transito Rules: Not Canc Error + Valid Date + Inside Interval
+        # Filter matching Transito Tab 1: Inside interval + Not Canc Error
         mask_bo = (
             (df["Estatus_upper"] != "CANC ERROR") & 
             (df["BO_Fecha"].notna()) &
-            (df["BO_Fecha"] >= start_date) & 
+            (df["BO_Fecha"] >= month_start) & 
             (df["BO_Fecha"] <= end_date)
         )
         
@@ -1128,7 +1147,7 @@ def load_combined_pipeline_data(start_yyyymmdd: str, end_yyyymmdd: str) -> tuple
         return pipeline_dict, total_back_dict
         
     except Exception as e:
-        print(f"Error loading combined data: {e}")
+        print(f"Error loading HTML Dashboard Data: {e}")
         return {}, {}
 
 @st.cache_data(ttl=600, show_spinner=False)
@@ -4070,8 +4089,8 @@ with tabs[8]:
 with tabs[9]:
     st.markdown("## Sistema de Informes Custom")
     
-    # 1. Fetch EVERYTHING in one fast query using strict Interval rules
-    pipeline_dict, total_back_dict = load_combined_pipeline_data(start_yyyymmdd, end_yyyymmdd)
+    # 1. Fetch EVERYTHING using the exact Streamlit dates
+    pipeline_dict, total_back_dict = load_html_dashboard_data(start_dt, end_dt)
 
     # 2. Get the dynamic days and period
     current_period = mes_labels.get(mes_sel, str(mes_sel)).title()
@@ -4101,14 +4120,12 @@ with tabs[9]:
             sup_raw = row.get("Supervisor", "")
             ejec_name = str(row.get("Ejecutivo", "")).strip()
             
-            # Skip the "TOTAL" summary rows
             if ejec_name.upper() == "TOTAL" or str(sup_raw).strip().upper() == "TOTAL":
                 continue
                 
             sup_norm = normalize_name(sup_raw)
             ej_norm = normalize_name(ejec_name)
             
-            # If the supervisor is in our map, process their agent
             if sup_norm in sup_map:
                 sup_id = sup_map[sup_norm]
                 
@@ -4116,7 +4133,7 @@ with tabs[9]:
                 ventas_val = int(row.get("Ventas", 0))
                 meta_val = int(row.get("Meta", 20))
                 
-                # B. Get Pipeline Breakdown (from load_combined_pipeline_data)
+                # B. Get Pipeline Breakdown
                 p_data = pipeline_dict.get(ej_norm, {})
                 v_entrega = int(p_data.get("entrega", 0))
                 v_prep = int(p_data.get("prep", 0))
@@ -4124,7 +4141,7 @@ with tabs[9]:
                 v_backoff = int(p_data.get("backoff", 0))
                 v_sinventa = int(p_data.get("sinventa", 0))
 
-                # C. TRUE monthly Back Office total (Filtered by interval + NOT Canc Error)
+                # C. TRUE monthly Back Office total 
                 v_back_feb = int(total_back_dict.get(ej_norm, 0)) 
                 
                 # Format for HTML
@@ -4166,13 +4183,11 @@ with tabs[9]:
         with open(html_path, "r", encoding="utf-8") as f:
             html_content = f.read()
 
-        # Inject the live data string
         html_content = html_content.replace(
             "/*PYTHON_INJECTS_JSON_HERE*/ null", 
             json_data
         )
 
-        # Render the custom UI inside Streamlit
         components.html(html_content, height=900, scrolling=True)
 
     except FileNotFoundError:
