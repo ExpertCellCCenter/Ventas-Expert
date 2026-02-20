@@ -15,6 +15,11 @@ import plotly.graph_objects as go
 import streamlit as st
 from pathlib import Path
 
+import streamlit.components.v1 as components
+import json
+
+from datetime import datetime
+import re
 # -------------------------------
 # CONFIG
 # -------------------------------
@@ -514,6 +519,8 @@ def add_empleado_join(ventas: pd.DataFrame, empleados: pd.DataFrame) -> pd.DataF
     out["Supervisor_norm"] = out["Supervisor"].apply(normalize_name)
     out["EJECUTIVO_norm"] = out["EJECUTIVO"].apply(normalize_name)
     return out
+
+
 
 
 # -------------------------------
@@ -1035,7 +1042,94 @@ def load_metas_from_csv() -> dict:
     except Exception as e:
         st.warning(f"No se pudo cargar el archivo de metas: {e}")
         return {}
-
+    
+@st.cache_data(ttl=600, show_spinner=False)
+def load_combined_pipeline_data(start_yyyymmdd: str, end_yyyymmdd: str) -> tuple[dict, dict]:
+    """
+    Fetches Pipeline details AND calculates the True Monthly Back Office Base 
+    using the exact interval and parsing logic from the 'transito' dashboard.
+    """
+    q = f"""
+    SELECT 
+        LTRIM(RTRIM([Vendedor])) AS EJECUTIVO,
+        LTRIM(RTRIM([Estatus])) AS Estatus,
+        [Venta],
+        [Back Office]
+    FROM reporte_programacion_entrega('empresa_maestra', 4, '{start_yyyymmdd}', '{end_yyyymmdd}')
+    WHERE [Tienda solicita] LIKE 'EXP ATT C CENTER%'
+    """
+    try:
+        df = read_sql(q)
+        if df is None or df.empty:
+            return {}, {}
+        
+        # Clean names and columns
+        df["EJ_NORM"] = df["EJECUTIVO"].astype(str).apply(normalize_name)
+        df["Estatus_upper"] = df["Estatus"].astype(str).str.strip().str.upper()
+        df["Venta_Vacia"] = df["Venta"].isna() | (df["Venta"].astype(str).str.strip() == "")
+        
+        # ==========================================
+        # 1. CALCULATE PIPELINE BREAKDOWN (Tránsito)
+        # ==========================================
+        def get_html_cat(row):
+            e = row["Estatus_upper"]
+            v_vacia = row["Venta_Vacia"]
+            if e == "EN ENTREGA": return "entrega"
+            if e in ["EN PREPARACION", "EN PREPARACIÓN"]: return "prep"
+            if e == "SOLICITADO": return "solic"
+            if e in ["BACK OFFICE", "BACKOFFICE"]: return "backoff"
+            if e == "ENTREGADO" and v_vacia: return "sinventa"
+            return None
+            
+        df["HTML_Cat"] = df.apply(get_html_cat, axis=1)
+        pipeline_df = df.dropna(subset=["HTML_Cat"])
+        pipeline_dict = {}
+        if not pipeline_df.empty:
+            pipeline_dict = pipeline_df.groupby(["EJ_NORM", "HTML_Cat"]).size().unstack(fill_value=0).to_dict('index')
+        
+        # ==========================================
+        # 2. CALCULATE TRUE BACK FEB (Back Office Intervalo)
+        # ==========================================
+        # A. Clean the Back Office string column
+        s = df["Back Office"].astype(str).str.strip()
+        s = s.replace({"nan": "", "None": "", "NaT": ""})
+        s = s.where(s != "", np.nan)
+        
+        # B. Extract the timestamp exactly like transito.py
+        if s.notna().any():
+            pat = r"(\d{1,2}[/-]\d{1,2}[/-]\d{2,4}\s+\d{1,2}:\d{2}(?::\d{2})?)|(\d{4}[/-]\d{1,2}[/-]\d{1,2}\s+\d{1,2}:\d{2}(?::\d{2})?)"
+            ext = s.astype(str).str.extract(pat)
+            ext = ext[0].fillna(ext[1])
+            s2 = ext.where(ext.notna(), s)
+        else:
+            s2 = s
+            
+        # C. Convert to datetime and extract the date
+        bo_dt = pd.to_datetime(s2, errors="coerce", dayfirst=True)
+        df["BO_Fecha"] = bo_dt.dt.date
+        
+        # D. Convert Streamlit string parameters to Date objects
+        start_date = datetime.strptime(start_yyyymmdd, "%Y%m%d").date()
+        end_date = datetime.strptime(end_yyyymmdd, "%Y%m%d").date()
+        
+        # E. Apply Exact Transito Rules: Not Canc Error + Valid Date + Inside Interval
+        mask_bo = (
+            (df["Estatus_upper"] != "CANC ERROR") & 
+            (df["BO_Fecha"].notna()) &
+            (df["BO_Fecha"] >= start_date) & 
+            (df["BO_Fecha"] <= end_date)
+        )
+        
+        backoffice_df = df[mask_bo]
+        total_back_dict = {}
+        if not backoffice_df.empty:
+            total_back_dict = backoffice_df.groupby("EJ_NORM").size().to_dict()
+            
+        return pipeline_dict, total_back_dict
+        
+    except Exception as e:
+        print(f"Error loading combined data: {e}")
+        return {}, {}
 
 @st.cache_data(ttl=600, show_spinner=False)
 def load_transito_counts(start_yyyymmdd: str, end_yyyymmdd: str) -> dict:
@@ -1216,6 +1310,7 @@ tabs = st.tabs(
         "🏆 Tops",
         "🎯 Metas",
         "📈 Tendencia Ejecutivo",
+        "✨ Interfaz Custom", # <-- NEW TAB
     ]
 )
 
@@ -3969,5 +4064,116 @@ with tabs[8]:
                     width="stretch",
                 )
 
+# ======================================================
+# TAB 10: Interfaz Custom (HTML)
+# ======================================================
+with tabs[9]:
+    st.markdown("## Sistema de Informes Custom")
+    
+    # 1. Fetch EVERYTHING in one fast query using strict Interval rules
+    pipeline_dict, total_back_dict = load_combined_pipeline_data(start_yyyymmdd, end_yyyymmdd)
 
+    # 2. Get the dynamic days and period
+    current_period = mes_labels.get(mes_sel, str(mes_sel)).title()
+    dias_restantes_int = int(round(dias_hab_restantes)) if 'dias_hab_restantes' in locals() else 8
+    
+    # 3. Map your SQL normalized supervisor names to the HTML short IDs
+    sup_map = {
+        normalize_name("REYNA LIZZETTE MARTINEZ GARCIA"): "reyna",
+        normalize_name("ALAN UZIEL SALAZAR AGUILAR"): "alan",
+        normalize_name("CARLOS ALBERTO AGUILAR CANO"): "carlos",
+        normalize_name("ALFREDO CABRERA PADRON"): "alfredo",
+        normalize_name("JORGE MIGUEL UREÑA ZARATE"): "jorge",
+        normalize_name("MARIA FERNANDA MARTINEZ BISTRAIN"): "maria"
+    }
+    
+    # 4. Initialize the JSON payload structure
+    live_data_payload = {
+        "diasRestantes": dias_restantes_int,
+        "periodo": current_period,
+        "supData": {k: {"ventas":0, "backFeb":0, "entrega":0, "prep":0, "solic":0, "backoff":0, "sinventa":0} for k in sup_map.values()},
+        "agents": {k: [] for k in sup_map.values()}
+    }
+    
+    # 5. Extract data automatically
+    if 'df_detalle_full' in locals() and not df_detalle_full.empty:
+        for _, row in df_detalle_full.iterrows():
+            sup_raw = row.get("Supervisor", "")
+            ejec_name = str(row.get("Ejecutivo", "")).strip()
+            
+            # Skip the "TOTAL" summary rows
+            if ejec_name.upper() == "TOTAL" or str(sup_raw).strip().upper() == "TOTAL":
+                continue
+                
+            sup_norm = normalize_name(sup_raw)
+            ej_norm = normalize_name(ejec_name)
+            
+            # If the supervisor is in our map, process their agent
+            if sup_norm in sup_map:
+                sup_id = sup_map[sup_norm]
+                
+                # A. Get Sales & Metas (from Tab 5)
+                ventas_val = int(row.get("Ventas", 0))
+                meta_val = int(row.get("Meta", 20))
+                
+                # B. Get Pipeline Breakdown (from load_combined_pipeline_data)
+                p_data = pipeline_dict.get(ej_norm, {})
+                v_entrega = int(p_data.get("entrega", 0))
+                v_prep = int(p_data.get("prep", 0))
+                v_solic = int(p_data.get("solic", 0))
+                v_backoff = int(p_data.get("backoff", 0))
+                v_sinventa = int(p_data.get("sinventa", 0))
 
+                # C. TRUE monthly Back Office total (Filtered by interval + NOT Canc Error)
+                v_back_feb = int(total_back_dict.get(ej_norm, 0)) 
+                
+                # Format for HTML
+                agent_data = {
+                    "name": ejec_name,
+                    "meta": meta_val,
+                    "data": {
+                        "ventas": ventas_val,
+                        "backFeb": v_back_feb, 
+                        "entrega": v_entrega,
+                        "prep": v_prep, 
+                        "solic": v_solic, 
+                        "backoff": v_backoff, 
+                        "sinventa": v_sinventa
+                    }
+                }
+                live_data_payload["agents"][sup_id].append(agent_data)
+                
+                # Accumulate the supervisor totals
+                live_data_payload["supData"][sup_id]["ventas"] += ventas_val
+                live_data_payload["supData"][sup_id]["backFeb"] += v_back_feb
+                live_data_payload["supData"][sup_id]["entrega"] += v_entrega
+                live_data_payload["supData"][sup_id]["prep"] += v_prep
+                live_data_payload["supData"][sup_id]["solic"] += v_solic
+                live_data_payload["supData"][sup_id]["backoff"] += v_backoff
+                live_data_payload["supData"][sup_id]["sinventa"] += v_sinventa
+
+    # 6. Convert to JSON and Inject into HTML
+    import os
+    import json
+    import streamlit.components.v1 as components
+    
+    json_data = json.dumps(live_data_payload)
+    
+    try:
+        current_dir = os.path.dirname(__file__)
+        html_path = os.path.join(current_dir, "dashboard.html")
+        
+        with open(html_path, "r", encoding="utf-8") as f:
+            html_content = f.read()
+
+        # Inject the live data string
+        html_content = html_content.replace(
+            "/*PYTHON_INJECTS_JSON_HERE*/ null", 
+            json_data
+        )
+
+        # Render the custom UI inside Streamlit
+        components.html(html_content, height=900, scrolling=True)
+
+    except FileNotFoundError:
+        st.error("No se encontró el archivo 'dashboard.html'. Asegúrate de que esté en la misma carpeta.")
