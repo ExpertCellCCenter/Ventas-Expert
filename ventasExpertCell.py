@@ -908,6 +908,29 @@ with st.spinner("Cargando datos desde SQL Server…"):
     ventas = add_empleado_join(ventas_raw, empleados)
     metas = load_metas_df()
 
+# ==============================================================
+# ✅ CUSTOM RULE: Move Ronaldo to Alfredo's team ONLY for Feb 2026
+# ==============================================================
+if not ventas.empty:
+    # 1. Target Ronaldo's sales in Feb 2026
+    mask_ronaldo_ventas = (
+        (ventas["EJECUTIVO_norm"] == normalize_name("RONALDO SANCHEZ CORDOVA")) & 
+        (ventas["AñoMes"] == 202602)
+    )
+    
+    # 2. Reassign his sales to Alfredo's team
+    ventas.loc[mask_ronaldo_ventas, "Supervisor"] = "ALFREDO CABRERA PADRON"
+    ventas.loc[mask_ronaldo_ventas, "Supervisor_norm"] = normalize_name("ALFREDO CABRERA PADRON")
+
+if not empleados.empty:
+    # 3. Target Ronaldo in the general Employee roster
+    mask_ronaldo_emp = (
+        empleados["Nombre"].apply(normalize_name) == normalize_name("RONALDO SANCHEZ CORDOVA")
+    )
+    # Move him so he shows up under Alfredo in the HTML Dropdowns/Tables
+    empleados.loc[mask_ronaldo_emp, "Jefe Inmediato"] = "ALFREDO CABRERA PADRON"
+# ==============================================================
+
 # ✅ ONLY FOR FILTER OPTIONS (do NOT change data logic):
 #    - remove BAJA supervisors (people no longer with you)
 #    - remove EDUARDO AGUILA SANCHEZ from Supervisor filters (he is coordinator of supervisors)
@@ -1043,16 +1066,45 @@ def load_metas_from_csv() -> dict:
         st.warning(f"No se pudo cargar el archivo de metas: {e}")
         return {}
     
+# =========================================================
+# ✅ TRANSITO LOGIC FOR HTML DASHBOARD (BACK OFFICE & PIPELINE)
+# =========================================================
+def parse_backoffice_datetime(series: pd.Series, window_start: date | None = None, window_end: date | None = None) -> pd.Series:
+    """Exact date parser from transito.py to guarantee 1-to-1 match."""
+    s = series.astype(str).str.strip()
+    s = s.replace({"nan": "", "None": "", "NaT": ""})
+    s = s.where(s != "", np.nan)
+
+    if s.notna().any():
+        pat = r"(\d{1,2}[/-]\d{1,2}[/-]\d{2,4}\s+\d{1,2}:\d{2}(?::\d{2})?)|(\d{4}[/-]\d{1,2}[/-]\d{1,2}\s+\d{1,2}:\d{2}(?::\d{2})?)"
+        ext = s.astype(str).str.extract(pat)
+        ext = ext[0].fillna(ext[1])
+        s2 = ext.where(ext.notna(), s)
+    else:
+        s2 = s
+
+    dt_dayfirst = pd.to_datetime(s2, errors="coerce", dayfirst=True)
+    dt_monthfirst = pd.to_datetime(s2, errors="coerce", dayfirst=False)
+
+    if window_start is None or window_end is None:
+        return dt_dayfirst
+
+    w0 = pd.Timestamp(window_start)
+    w1 = pd.Timestamp(window_end) + pd.Timedelta(days=1) - pd.Timedelta(microseconds=1)
+
+    in1 = dt_dayfirst.between(w0, w1)
+    in2 = dt_monthfirst.between(w0, w1)
+
+    out = dt_dayfirst.copy()
+    out = out.where(~(in2 & ~in1), dt_monthfirst)
+    out = out.where(~(dt_dayfirst.isna() & dt_monthfirst.notna()), dt_monthfirst)
+    return out
+
 @st.cache_data(ttl=600, show_spinner=False)
-def load_html_dashboard_data(start_date: date, end_date: date) -> tuple[dict, dict]:
-    """
-    1) Fetches pipeline based on sidebar dates.
-    2) Calculates True Monthly Back Office (Back Feb) using the wide 
-       PBI_START window to catch historical tickets, matching transito.py exactly.
-    """
-    # Force a wide start date to catch old tickets that moved to BO this month
-    wide_start_str = "20251101" 
-    end_str = end_date.strftime("%Y%m%d")
+def load_html_dashboard_data(start_date: date, end_date: date, mes_sel_int: int) -> tuple[dict, dict]:
+    # Use 20251101 to catch ALL historical tickets exactly like transito.py
+    fi_str = "20251101"
+    ff_str = end_date.strftime("%Y%m%d")
     
     q = f"""
     SELECT 
@@ -1061,25 +1113,22 @@ def load_html_dashboard_data(start_date: date, end_date: date) -> tuple[dict, di
         [Venta],
         [Back Office],
         [Fecha creacion]
-    FROM reporte_programacion_entrega('empresa_maestra', 4, '{wide_start_str}', '{end_str}')
+    FROM reporte_programacion_entrega('empresa_maestra', 4, '{fi_str}', '{ff_str}')
     WHERE [Tienda solicita] LIKE 'EXP ATT C CENTER%'
     """
     try:
         df = read_sql(q)
-        if df is None or df.empty:
-            return {}, {}
+        if df is None or df.empty: return {}, {}
             
         df["EJ_NORM"] = df["EJECUTIVO"].astype(str).apply(normalize_name)
         df["Estatus_upper"] = df["Estatus"].astype(str).str.strip().str.upper()
         df["Venta_Vacia"] = df["Venta"].isna() | (df["Venta"].astype(str).str.strip() == "")
         
         # ==========================================
-        # 1. CALCULATE PIPELINE BREAKDOWN (Tránsito)
+        # 1. PIPELINE & VENTAS (Filtered strictly by Sidebar Dates)
         # ==========================================
-        # Pipeline is filtered strictly by the Streamlit sidebar dates
         df["Fecha_Creacion_DT"] = pd.to_datetime(df["Fecha creacion"], errors="coerce", dayfirst=True).dt.date
-        mask_pipeline = (df["Fecha_Creacion_DT"] >= start_date) & (df["Fecha_Creacion_DT"] <= end_date)
-        df_pipeline = df[mask_pipeline].copy()
+        df_pipeline = df[(df["Fecha_Creacion_DT"] >= start_date) & (df["Fecha_Creacion_DT"] <= end_date)].copy()
         
         def get_html_cat(row):
             e = row["Estatus_upper"]
@@ -1089,49 +1138,24 @@ def load_html_dashboard_data(start_date: date, end_date: date) -> tuple[dict, di
             if e == "SOLICITADO": return "solic"
             if e in ["BACK OFFICE", "BACKOFFICE"]: return "backoff"
             if e == "ENTREGADO" and v_vacia: return "sinventa"
+            # ✅ EXACT MATCH TO TRANSITO'S "ACTIVADAS" LOGIC:
+            if e == "ENTREGADO" and not v_vacia: return "ventas" 
             return None
             
         df_pipeline["HTML_Cat"] = df_pipeline.apply(get_html_cat, axis=1)
         pipeline_df = df_pipeline.dropna(subset=["HTML_Cat"])
-        
-        pipeline_dict = {}
-        if not pipeline_df.empty:
-            pipeline_dict = pipeline_df.groupby(["EJ_NORM", "HTML_Cat"]).size().unstack(fill_value=0).to_dict('index')
+        pipeline_dict = pipeline_df.groupby(["EJ_NORM", "HTML_Cat"]).size().unstack(fill_value=0).to_dict('index') if not pipeline_df.empty else {}
             
         # ==========================================
-        # 2. CALCULATE TRUE BACK FEB (Monthly Back Office)
+        # 2. TRUE BACK FEB (Monthly Back Office Base)
         # ==========================================
-        # Exactly matching the parse_backoffice_datetime logic from transito.py
-        s = df["Back Office"].astype(str).str.strip()
-        s = s.replace({"nan": "", "None": "", "NaT": ""})
-        s = s.where(s != "", np.nan)
+        year = mes_sel_int // 100
+        month = mes_sel_int % 100
+        month_start = date(year, month, 1)
         
-        if s.notna().any():
-            pat = r"(\d{1,2}[/-]\d{1,2}[/-]\d{2,4}\s+\d{1,2}:\d{2}(?::\d{2})?)|(\d{4}[/-]\d{1,2}[/-]\d{1,2}\s+\d{1,2}:\d{2}(?::\d{2})?)"
-            ext = s.astype(str).str.extract(pat)
-            ext = ext[0].fillna(ext[1])
-            s2 = ext.where(ext.notna(), s)
-        else:
-            s2 = s
-            
-        dt_dayfirst = pd.to_datetime(s2, errors="coerce", dayfirst=True)
-        dt_monthfirst = pd.to_datetime(s2, errors="coerce", dayfirst=False)
-        
-        # Calculate Interval: 1st of the month -> end_date
-        month_start = end_date.replace(day=1)
-        w0 = pd.Timestamp(month_start)
-        w1 = pd.Timestamp(end_date) + pd.Timedelta(days=1) - pd.Timedelta(microseconds=1)
-        
-        in1 = dt_dayfirst.between(w0, w1)
-        in2 = dt_monthfirst.between(w0, w1)
-        
-        bo_dt = dt_dayfirst.copy()
-        bo_dt = bo_dt.where(~(in2 & ~in1), dt_monthfirst)
-        bo_dt = bo_dt.where(~(dt_dayfirst.isna() & dt_monthfirst.notna()), dt_monthfirst)
-        
+        bo_dt = parse_backoffice_datetime(df["Back Office"], window_start=month_start, window_end=end_date)
         df["BO_Fecha"] = bo_dt.dt.date
         
-        # Filter matching Transito Tab 1: Inside interval + Not Canc Error
         mask_bo = (
             (df["Estatus_upper"] != "CANC ERROR") & 
             (df["BO_Fecha"].notna()) &
@@ -1140,15 +1164,15 @@ def load_html_dashboard_data(start_date: date, end_date: date) -> tuple[dict, di
         )
         
         backoffice_df = df[mask_bo]
-        total_back_dict = {}
-        if not backoffice_df.empty:
-            total_back_dict = backoffice_df.groupby("EJ_NORM").size().to_dict()
+        total_back_dict = backoffice_df.groupby("EJ_NORM").size().to_dict() if not backoffice_df.empty else {}
             
         return pipeline_dict, total_back_dict
         
     except Exception as e:
         print(f"Error loading HTML Dashboard Data: {e}")
         return {}, {}
+
+
 
 @st.cache_data(ttl=600, show_spinner=False)
 def load_transito_counts(start_yyyymmdd: str, end_yyyymmdd: str) -> dict:
@@ -2506,6 +2530,8 @@ with tabs[4]:
 
     # ---- ROSTER (employees who should appear even with 0 ventas) ----
     emp_roster = empleados.copy()
+
+
 
     # ✅ Include ACTIVO + anyone with Programadas (EnTransito/Activadas) to match dashboard2
     emp_roster["Estatus"] = emp_roster["Estatus"].astype(str).str.strip().str.upper()
@@ -4089,8 +4115,20 @@ with tabs[8]:
 with tabs[9]:
     st.markdown("## Sistema de Informes Custom")
     
-    # 1. Fetch EVERYTHING using the exact Streamlit dates
-    pipeline_dict, total_back_dict = load_html_dashboard_data(start_dt, end_dt)
+    try:
+        mes_sel_int = int(mes_sel)
+    except Exception:
+        today = date.today()
+        mes_sel_int = today.year * 100 + today.month
+        
+    # 1. Fetch PIPELINE and BACK FEB using the wide date rules
+    pipeline_dict, total_back_dict = load_html_dashboard_data(start_dt, end_dt, mes_sel_int)
+
+    # 1B. ✅ TRUE VENTAS (Exactly as shown in the Metas Tab)
+    # This reads from df_base, which is strictly filtered to the current month!
+    ventas_reales_dict = {}
+    if not df_base.empty:
+        ventas_reales_dict = df_base.groupby("EJECUTIVO_norm").size().to_dict()
 
     # 2. Get the dynamic days and period
     current_period = mes_labels.get(mes_sel, str(mes_sel)).title()
@@ -4129,19 +4167,21 @@ with tabs[9]:
             if sup_norm in sup_map:
                 sup_id = sup_map[sup_norm]
                 
-                # A. Get Sales & Metas (from Tab 5)
-                ventas_val = int(row.get("Ventas", 0))
+                # A. Get Metas (from Tab 5)
                 meta_val = int(row.get("Meta", 20))
                 
-                # B. Get Pipeline Breakdown
+                # B. ✅ PULL TRUE VENTAS DIRECTLY FROM METAS LOGIC (df_base)
+                v_ventas = int(ventas_reales_dict.get(ej_norm, 0))
+                
+                # C. Get Pipeline Metrics
                 p_data = pipeline_dict.get(ej_norm, {})
                 v_entrega = int(p_data.get("entrega", 0))
-                v_prep = int(p_data.get("prep", 0))
-                v_solic = int(p_data.get("solic", 0))
+                v_prep    = int(p_data.get("prep", 0))
+                v_solic   = int(p_data.get("solic", 0))
                 v_backoff = int(p_data.get("backoff", 0))
-                v_sinventa = int(p_data.get("sinventa", 0))
+                v_sinventa= int(p_data.get("sinventa", 0))
 
-                # C. TRUE monthly Back Office total 
+                # D. TRUE monthly Back Office total 
                 v_back_feb = int(total_back_dict.get(ej_norm, 0)) 
                 
                 # Format for HTML
@@ -4149,7 +4189,7 @@ with tabs[9]:
                     "name": ejec_name,
                     "meta": meta_val,
                     "data": {
-                        "ventas": ventas_val,
+                        "ventas": v_ventas, 
                         "backFeb": v_back_feb, 
                         "entrega": v_entrega,
                         "prep": v_prep, 
@@ -4161,7 +4201,7 @@ with tabs[9]:
                 live_data_payload["agents"][sup_id].append(agent_data)
                 
                 # Accumulate the supervisor totals
-                live_data_payload["supData"][sup_id]["ventas"] += ventas_val
+                live_data_payload["supData"][sup_id]["ventas"] += v_ventas
                 live_data_payload["supData"][sup_id]["backFeb"] += v_back_feb
                 live_data_payload["supData"][sup_id]["entrega"] += v_entrega
                 live_data_payload["supData"][sup_id]["prep"] += v_prep
