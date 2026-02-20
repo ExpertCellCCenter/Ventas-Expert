@@ -20,6 +20,9 @@ import json
 
 from datetime import datetime
 import re
+import pyodbc
+from functools import lru_cache
+
 # -------------------------------
 # CONFIG
 # -------------------------------
@@ -150,12 +153,14 @@ def fmt_pct(x: float | None) -> str:
     return f"{x*100:.2f}%"
 
 
+@lru_cache(maxsize=50000)
 def normalize_name(s: str) -> str:
-    s = "" if s is None else str(s)
-    s = s.strip().upper()
+    if s is None:
+        s = ""
+    s = str(s).strip().upper()
     s = " ".join(s.split())
     s = unicodedata.normalize("NFKD", s)
-    s = "".join([c for c in s if not unicodedata.combining(c)])
+    s = "".join(c for c in s if not unicodedata.combining(c))
     return s
 
 
@@ -378,9 +383,10 @@ def get_db_cfg():
     }
 
 
-@st.cache_data(ttl=600, show_spinner=False)
-def read_sql(query: str) -> pd.DataFrame:
-    import pyodbc
+import pyodbc
+
+@st.cache_resource(show_spinner=False)
+def _get_conn():
     cfg = get_db_cfg()
     conn_str = (
         f"DRIVER={{{cfg['driver']}}};"
@@ -390,9 +396,18 @@ def read_sql(query: str) -> pd.DataFrame:
         f"PWD={cfg['password']};"
         "TrustServerCertificate=yes;"
     )
-    with pyodbc.connect(conn_str) as conn:
-        return pd.read_sql(query, conn)
+    return pyodbc.connect(conn_str, autocommit=True)
 
+@st.cache_data(ttl=600, show_spinner=False)
+def read_sql(query: str) -> pd.DataFrame:
+    try:
+        conn = _get_conn()
+        return pd.read_sql(query, conn)
+    except pyodbc.Error:
+        # if the connection died, rebuild once
+        st.cache_resource.clear()
+        conn = _get_conn()
+        return pd.read_sql(query, conn)
 
 # -------------------------------
 # POWER QUERY → PANDAS (Consulta2)
@@ -475,7 +490,9 @@ def load_ventas(start_yyyymmdd: str, end_yyyymmdd: str) -> pd.DataFrame:
             return "EXP ATT C CENTER 2"
         return c
 
-    df["CENTRO"] = df["CENTRO"].apply(fix_centro)
+    c = df["CENTRO"].astype(str).str.upper()
+    df["CENTRO"] = np.where(c.str.contains("JUAREZ", na=False), "EXP ATT C CENTER JUAREZ",
+                     np.where(c.str.contains("CENTER 2", na=False), "EXP ATT C CENTER 2", df["CENTRO"]))
 
     df["EJECUTIVO"] = df["EJECUTIVO"].replace(
         {
@@ -887,9 +904,8 @@ with btn_cols[1]:
     st.caption(f"🕒 {st.session_state['last_refresh']}" if st.session_state["last_refresh"] else "")
 
 # ✅ Auto-detect today's date and use it as default "Fin"
-default_start = "20250801"
-default_start_dt = datetime.strptime(default_start, "%Y%m%d").date()
 default_end_dt = date.today()
+default_start_dt = (pd.Timestamp(default_end_dt.replace(day=1)) - pd.DateOffset(months=3)).date()
 
 d1, d2 = st.sidebar.columns(2)
 start_dt = d1.date_input("Inicio", value=default_start_dt, format="YYYY-MM-DD")
@@ -1100,12 +1116,14 @@ def parse_backoffice_datetime(series: pd.Series, window_start: date | None = Non
     out = out.where(~(dt_dayfirst.isna() & dt_monthfirst.notna()), dt_monthfirst)
     return out
 
+# =========================================================
+# ✅ SINGLE CACHED FETCH FOR ALL TRANSITO & HTML DATA
+# =========================================================
 @st.cache_data(ttl=600, show_spinner=False)
-def load_html_dashboard_data(start_date: date, end_date: date, mes_sel_int: int) -> tuple[dict, dict]:
-    # Use 20251101 to catch ALL historical tickets exactly like transito.py
+def fetch_programacion_history(end_date: date) -> pd.DataFrame:
+    """Pulls from Nov 2025 to end_date ONCE and caches it in memory."""
     fi_str = "20251101"
     ff_str = end_date.strftime("%Y%m%d")
-    
     q = f"""
     SELECT 
         LTRIM(RTRIM([Vendedor])) AS EJECUTIVO,
@@ -1118,176 +1136,22 @@ def load_html_dashboard_data(start_date: date, end_date: date, mes_sel_int: int)
     """
     try:
         df = read_sql(q)
-        if df is None or df.empty: return {}, {}
-            
-        df["EJ_NORM"] = df["EJECUTIVO"].astype(str).apply(normalize_name)
-        df["Estatus_upper"] = df["Estatus"].astype(str).str.strip().str.upper()
-        df["Venta_Vacia"] = df["Venta"].isna() | (df["Venta"].astype(str).str.strip() == "")
-        
-        # ==========================================
-        # 1. PIPELINE & VENTAS (Filtered strictly by Sidebar Dates)
-        # ==========================================
-        df["Fecha_Creacion_DT"] = pd.to_datetime(df["Fecha creacion"], errors="coerce", dayfirst=True).dt.date
-        df_pipeline = df[(df["Fecha_Creacion_DT"] >= start_date) & (df["Fecha_Creacion_DT"] <= end_date)].copy()
-        
-        def get_html_cat(row):
-            e = row["Estatus_upper"]
-            v_vacia = row["Venta_Vacia"]
-            if e == "EN ENTREGA": return "entrega"
-            if e in ["EN PREPARACION", "EN PREPARACIÓN"]: return "prep"
-            if e == "SOLICITADO": return "solic"
-            if e in ["BACK OFFICE", "BACKOFFICE"]: return "backoff"
-            if e == "ENTREGADO" and v_vacia: return "sinventa"
-            # ✅ EXACT MATCH TO TRANSITO'S "ACTIVADAS" LOGIC:
-            if e == "ENTREGADO" and not v_vacia: return "ventas" 
-            return None
-            
-        df_pipeline["HTML_Cat"] = df_pipeline.apply(get_html_cat, axis=1)
-        pipeline_df = df_pipeline.dropna(subset=["HTML_Cat"])
-        pipeline_dict = pipeline_df.groupby(["EJ_NORM", "HTML_Cat"]).size().unstack(fill_value=0).to_dict('index') if not pipeline_df.empty else {}
-            
-        # ==========================================
-        # 2. TRUE BACK FEB (Monthly Back Office Base)
-        # ==========================================
-        year = mes_sel_int // 100
-        month = mes_sel_int % 100
-        month_start = date(year, month, 1)
-        
-        bo_dt = parse_backoffice_datetime(df["Back Office"], window_start=month_start, window_end=end_date)
-        df["BO_Fecha"] = bo_dt.dt.date
-        
-        mask_bo = (
-            (df["Estatus_upper"] != "CANC ERROR") & 
-            (df["BO_Fecha"].notna()) &
-            (df["BO_Fecha"] >= month_start) & 
-            (df["BO_Fecha"] <= end_date)
-        )
-        
-        backoffice_df = df[mask_bo]
-        total_back_dict = backoffice_df.groupby("EJ_NORM").size().to_dict() if not backoffice_df.empty else {}
-            
-        return pipeline_dict, total_back_dict
-        
+        if not df.empty:
+            df["EJ_NORM"] = df["EJECUTIVO"].astype(str).apply(normalize_name)
+            df["EJ_NORM"] = df["EJ_NORM"].replace({
+                normalize_name("CESAR JAHACIEL ALONSO GARCIAA"): normalize_name("CESAR JAHACIEL ALONSO GARCIA"),
+                normalize_name("VICTOR BETANZO FUENTES"): normalize_name("VICTOR BETANZOS FUENTES"),
+            })
+            df["Estatus_upper"] = df["Estatus"].astype(str).str.strip().str.upper()
+            df["Venta_Vacia"] = df["Venta"].isna() | (df["Venta"].astype(str).str.strip() == "")
+            df["Fecha_Creacion_DT"] = pd.to_datetime(df["Fecha creacion"], errors="coerce", dayfirst=True).dt.date
+        return df
     except Exception as e:
-        print(f"Error loading HTML Dashboard Data: {e}")
-        return {}, {}
+        print(f"Error loading history: {e}")
+        return pd.DataFrame()
 
 
 
-@st.cache_data(ttl=600, show_spinner=False)
-def load_transito_counts(start_yyyymmdd: str, end_yyyymmdd: str) -> dict:
-    """
-    Fetches count of orders 'En Tránsito' (pipeline) per executive.
-    ✅ Robust match to dashboard2:
-       - Case-insensitive
-       - Accent-insensitive (preparación vs preparacion)
-       - Trims spaces
-       - Handles BackOffice variants
-       - Includes "En Transito" variants if they exist
-       - Keeps the rule:
-            En Transito = (Estatus in pipeline)
-                         OR (Estatus='Entregado' AND Venta is blank)
-    """
-    q = f"""
-    ;WITH x AS (
-        SELECT
-            LTRIM(RTRIM([Vendedor])) AS EJECUTIVO,
-            -- Normalize Estatus: trim + upper + accent-insensitive collation
-            UPPER(LTRIM(RTRIM(COALESCE([Estatus], '')))) COLLATE Latin1_General_CI_AI AS EST_NORM,
-            -- Normalize Venta: blank => NULL
-            NULLIF(LTRIM(RTRIM(CAST([Venta] AS NVARCHAR(200)))), '') AS VENTA_NORM
-        FROM reporte_programacion_entrega('empresa_maestra', 4, '{start_yyyymmdd}', '{end_yyyymmdd}')
-        WHERE [Tienda solicita] LIKE 'EXP ATT C CENTER%'
-    )
-    SELECT
-        EJECUTIVO,
-        COUNT(*) AS Conteo
-    FROM x
-    WHERE
-        (
-            -- ✅ Pipeline statuses (match dashboard2)
-            EST_NORM IN (
-                'EN ENTREGA',
-                'EN PREPARACION',
-                'SOLICITADO',
-                'BACK OFFICE',
-                'BACKOFFICE',
-                'EN TRANSITO',
-                'EN TRÁNSITO'
-            )
-        )
-        OR
-        (
-            -- ✅ "Entregado" but NOT activated yet (Venta blank)
-            EST_NORM = 'ENTREGADO'
-            AND VENTA_NORM IS NULL
-        )
-    GROUP BY EJECUTIVO
-    ;
-    """
-    try:
-        df = read_sql(q)
-        if df is None or df.empty:
-            return {}
-
-        # normalize executive names same way you do everywhere
-        df["EJ_NORM"] = df["EJECUTIVO"].astype(str).apply(normalize_name)
-
-        # same name fixes you apply in ventas / activadas
-        df["EJ_NORM"] = df["EJ_NORM"].replace(
-            {
-                normalize_name("CESAR JAHACIEL ALONSO GARCIAA"): normalize_name("CESAR JAHACIEL ALONSO GARCIA"),
-                normalize_name("VICTOR BETANZO FUENTES"): normalize_name("VICTOR BETANZOS FUENTES"),
-            }
-        )
-
-        df["Conteo"] = pd.to_numeric(df["Conteo"], errors="coerce").fillna(0).astype(int)
-        return df.set_index("EJ_NORM")["Conteo"].to_dict()
-
-    except Exception:
-        return {}
-
-
-    
-
-@st.cache_data(ttl=600, show_spinner=False)
-def load_activadas_counts(start_yyyymmdd: str, end_yyyymmdd: str) -> dict:
-    """
-    Fetches count of 'Activadas' per executive using the SAME rule as dashboard2:
-      Activadas = Status == 'Entregado'
-    In dashboard2, Status=='Entregado' corresponds to:
-      Estatus == 'Entregado' AND Venta is NOT blank.
-    """
-    q = f"""
-    SELECT
-        LTRIM(RTRIM([Vendedor])) AS EJECUTIVO,
-        COUNT(*) AS Conteo
-    FROM reporte_programacion_entrega('empresa_maestra', 4, '{start_yyyymmdd}', '{end_yyyymmdd}')
-    WHERE
-        [Tienda solicita] LIKE 'EXP ATT C CENTER%'
-        AND LTRIM(RTRIM([Estatus])) = 'Entregado'
-        AND [Venta] IS NOT NULL
-        AND LTRIM(RTRIM(CAST([Venta] AS NVARCHAR(200)))) <> ''
-    GROUP BY LTRIM(RTRIM([Vendedor]))
-    """
-    try:
-        df = read_sql(q)
-        if df is None or df.empty:
-            return {}
-        df["EJ_NORM"] = df["EJECUTIVO"].astype(str).apply(normalize_name)
-
-        # (optional) same name fixes you apply in ventas / tránsito
-        df["EJ_NORM"] = df["EJ_NORM"].replace(
-            {
-                normalize_name("CESAR JAHACIEL ALONSO GARCIAA"): normalize_name("CESAR JAHACIEL ALONSO GARCIA"),
-                normalize_name("VICTOR BETANZO FUENTES"): normalize_name("VICTOR BETANZOS FUENTES"),
-            }
-        )
-
-        df["Conteo"] = pd.to_numeric(df["Conteo"], errors="coerce").fillna(0).astype(int)
-        return df.set_index("EJ_NORM")["Conteo"].to_dict()
-    except Exception:
-        return {}
 @st.cache_data(ttl=600, show_spinner=False)
 def load_metas_supervisor_from_excel() -> dict:
     """
@@ -1479,6 +1343,100 @@ with tabs[0]:
             hide_index=True,
             width="stretch",
         )
+
+        # ---------------------------------------------------------
+        # ✅ NEW: Ventas por Equipo (Supervisor) — intervalo seleccionado (TAB 1)
+        #     - If you selected days in the bar chart => uses ONLY those days
+        #     - Else => uses full month (df_base)
+        # ---------------------------------------------------------
+        st.markdown("---")
+        st.markdown("### 👥 Ventas por Equipo (Supervisor) — intervalo seleccionado")
+
+        df_interval = df_base.copy()
+
+        # If user selected points (days) in the chart, use those dates only
+        if sel_dates:
+            df_interval = df_base[df_base["Fecha"].isin(sel_dates)].copy()
+            st.caption(f"Intervalo: {sel_arpu_label}")
+        else:
+            st.caption("Intervalo: Mes completo (según filtros)")
+
+        # Optional: exclude BAJA + Eduardo from this visualization (consistent with filter list)
+        if "Supervisor_norm" in df_interval.columns:
+            df_interval = df_interval[~df_interval["Supervisor_norm"].isin(EXCLUDED_SUP_NORMS)].copy()
+
+        if df_interval.empty:
+            st.info("No hay datos para graficar por equipo con el intervalo/filtros actuales.")
+        else:
+            team_kpi = (
+                df_interval.groupby("Supervisor", as_index=False)
+                .agg(
+                    Ventas=("FOLIO", "count"),
+                    Ejecutivos=("EJECUTIVO", "nunique"),
+                    MontoVendido=("PRECIO", "sum"),
+                )
+                .copy()
+            )
+
+            team_kpi["ARPU"] = np.where(team_kpi["Ventas"] > 0, team_kpi["MontoVendido"] / team_kpi["Ventas"], 0.0)
+
+            # Nice label
+            team_kpi["Etiqueta"] = (
+                team_kpi["Ventas"].astype(int).map(lambda x: f"{x:,}")
+                + " ventas | "
+                + team_kpi["Ejecutivos"].astype(int).map(lambda x: f"{x:,}")
+                + " ejecutivos"
+            )
+
+            team_kpi = team_kpi.sort_values("Ventas", ascending=False).reset_index(drop=True)
+
+            dyn_h = max(360, 140 + 32 * len(team_kpi))
+
+            fig_team = px.bar(
+                team_kpi.sort_values("Ventas", ascending=True),
+                x="Ventas",
+                y="Supervisor",
+                orientation="h",
+                text="Etiqueta",
+                title="Ventas por Supervisor (Equipo)",
+                hover_data={"MontoVendido": ":,.2f", "ARPU": ":,.2f", "Ventas": True, "Ejecutivos": True, "Etiqueta": False},
+                template=PLOTLY_TEMPLATE,
+            )
+            fig_team.update_traces(textposition="outside", cliponaxis=False)
+            fig_team.update_layout(
+                height=dyn_h,
+                showlegend=False,
+                paper_bgcolor="rgba(0,0,0,0)",
+                plot_bgcolor="rgba(0,0,0,0)",
+                margin=dict(l=320, r=30, t=70, b=20),
+                xaxis_title="Ventas",
+                yaxis_title="Supervisor",
+            )
+            apply_plotly_theme(fig_team)
+
+            st.plotly_chart(fig_team, width="stretch", key=f"t0_team_interval_{mes_sel}_{len(sel_dates) if sel_dates else 0}")
+
+            # Table summary (with TOTAL row)
+            team_show = team_kpi[["Supervisor", "Ventas", "Ejecutivos", "MontoVendido", "ARPU"]].copy()
+            team_show = add_totals_row(
+                team_show,
+                label_col="Supervisor",
+                totals={
+                    "Ventas": int(team_show["Ventas"].sum()),
+                    "Ejecutivos": int(team_show["Ejecutivos"].sum()),
+                    "MontoVendido": float(team_show["MontoVendido"].sum()),
+                    "ARPU": (float(team_show["MontoVendido"].sum()) / int(team_show["Ventas"].sum())) if int(team_show["Ventas"].sum()) > 0 else 0.0,
+                },
+                label="TOTAL",
+            )
+
+            st.dataframe(
+                style_totals_bold(team_show, label_col="Supervisor").format(
+                    {"Ventas": "{:,.0f}", "Ejecutivos": "{:,.0f}", "MontoVendido": "${:,.2f}", "ARPU": "${:,.2f}"}
+                ),
+                hide_index=True,
+                width="stretch",
+            )
 
         # ✅ DOWNLOAD EXCEL (Global Mes) — UPDATED (includes ALL ventas)
 
@@ -2494,8 +2452,27 @@ with tabs[4]:
 
     # Query tránsito only for the selected month window
     m_start, m_end = month_bounds(int(mes_sel))
-    transito_map = load_transito_counts(m_start.strftime("%Y%m%d"), m_end.strftime("%Y%m%d"))
-    activadas_map = load_activadas_counts(m_start.strftime("%Y%m%d"), m_end.strftime("%Y%m%d"))
+    
+    # ⚡ Load cached history instantly
+    prog_history = fetch_programacion_history(end_dt)
+    
+    transito_map = {}
+    activadas_map = {}
+    
+    if not prog_history.empty:
+        # Filter strictly by the month for Tab 5
+        mask_month = (prog_history["Fecha_Creacion_DT"] >= m_start) & (prog_history["Fecha_Creacion_DT"] <= m_end)
+        df_month = prog_history[mask_month].copy()
+        
+        # Calculate Transito Map
+        transito_mask = (df_month["Estatus_upper"].isin(['EN ENTREGA', 'EN PREPARACION', 'EN PREPARACIÓN', 'SOLICITADO', 'BACK OFFICE', 'BACKOFFICE', 'EN TRANSITO', 'EN TRÁNSITO'])) | ((df_month["Estatus_upper"] == 'ENTREGADO') & df_month["Venta_Vacia"])
+        if not df_month[transito_mask].empty:
+            transito_map = df_month[transito_mask].groupby("EJ_NORM").size().to_dict()
+            
+        # Calculate Activadas Map
+        activadas_mask = (df_month["Estatus_upper"] == 'ENTREGADO') & (~df_month["Venta_Vacia"])
+        if not df_month[activadas_mask].empty:
+            activadas_map = df_month[activadas_mask].groupby("EJ_NORM").size().to_dict()
 
     metas_sup_map = load_metas_supervisor_from_excel()
 
@@ -4121,8 +4098,65 @@ with tabs[9]:
         today = date.today()
         mes_sel_int = today.year * 100 + today.month
         
-    # 1. Fetch PIPELINE and BACK FEB using the wide date rules
-    pipeline_dict, total_back_dict = load_html_dashboard_data(start_dt, end_dt, mes_sel_int)
+    # ---------------------------------------------------------
+    # ⚡ CALCULATE HTML DATA USING INSTANT CACHED MEMORY
+    # ---------------------------------------------------------
+    pipeline_dict = {}
+    total_back_dict = {}
+    prog_history = fetch_programacion_history(end_dt)
+    
+    if not prog_history.empty:
+        df_html = prog_history.copy()
+        
+        # 1. Pipeline calculation (Filtered by sidebar dates)
+        mask_pipeline = (df_html["Fecha_Creacion_DT"] >= start_dt) & (df_html["Fecha_Creacion_DT"] <= end_dt)
+        df_pipeline = df_html[mask_pipeline].copy()
+        
+        def get_html_cat(row):
+            e = row["Estatus_upper"]
+            v_vacia = row["Venta_Vacia"]
+            if e == "EN ENTREGA": return "entrega"
+            if e in ["EN PREPARACION", "EN PREPARACIÓN"]: return "prep"
+            if e == "SOLICITADO": return "solic"
+            if e in ["BACK OFFICE", "BACKOFFICE"]: return "backoff"
+            if e == "ENTREGADO" and v_vacia: return "sinventa"
+            return None
+            
+        E = df_pipeline["Estatus_upper"]
+        V = df_pipeline["Venta_Vacia"]
+
+        condlist = [
+            E.eq("EN ENTREGA"),
+            E.isin(["EN PREPARACION", "EN PREPARACIÓN"]),
+            E.eq("SOLICITADO"),
+            E.isin(["BACK OFFICE", "BACKOFFICE"]),
+            E.eq("ENTREGADO") & V,
+        ]
+        choicelist = ["entrega", "prep", "solic", "backoff", "sinventa"]
+
+        df_pipeline["HTML_Cat"] = np.select(condlist, choicelist, default=None)
+        pipeline_df = df_pipeline[df_pipeline["HTML_Cat"].notna()].copy()
+        pipeline_df = df_pipeline.dropna(subset=["HTML_Cat"])
+        if not pipeline_df.empty:
+            pipeline_dict = pipeline_df.groupby(["EJ_NORM", "HTML_Cat"]).size().unstack(fill_value=0).to_dict('index')
+            
+        # 2. True Monthly Back Office calculation (Filtered by Month Start to End Date)
+        year = mes_sel_int // 100
+        month = mes_sel_int % 100
+        month_start = date(year, month, 1)
+        
+        bo_dt = parse_backoffice_datetime(df_html["Back Office"], window_start=month_start, window_end=end_dt)
+        df_html["BO_Fecha"] = bo_dt.dt.date
+        
+        mask_bo = (
+            (df_html["Estatus_upper"] != "CANC ERROR") & 
+            (df_html["BO_Fecha"].notna()) &
+            (df_html["BO_Fecha"] >= month_start) & 
+            (df_html["BO_Fecha"] <= end_dt)
+        )
+        backoffice_df = df_html[mask_bo]
+        if not backoffice_df.empty:
+            total_back_dict = backoffice_df.groupby("EJ_NORM").size().to_dict()
 
     # 1B. ✅ TRUE VENTAS (Exactly as shown in the Metas Tab)
     # This reads from df_base, which is strictly filtered to the current month!
