@@ -6,30 +6,31 @@
 <title>ExpertCell - Sistema de Informes</title>
 <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Plus+Jakarta+Sans:wght@700;800&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/chartjs-plugin-datalabels/2.2.0/chartjs-plugin-datalabels.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
 <style>
 :root {
-  --bg:#0B0F1A;--card:#141924;--card-hover:#1a2233;--border:rgba(255,255,255,0.06);
-  --border-focus:rgba(59,130,246,0.5);--text:#E8ECF4;--text-dim:#7A8599;
-  --accent:#3B82F6;--accent-glow:rgba(59,130,246,0.15);
+  --bg:#091524;--card:#0e1e33;--card-hover:#132841;--border:rgba(255,255,255,0.08);
+  --border-focus:rgba(0,168,224,0.5);--text:#E8ECF4;--text-dim:#8899ad;
+  --accent:#00A8E0;--accent-glow:rgba(0,168,224,0.12);
   --green:#22C55E;--green-dim:rgba(34,197,94,0.12);
   --red:#EF4444;--red-dim:rgba(239,68,68,0.12);
-  --amber:#F59E0B;--amber-dim:rgba(245,158,11,0.12);
-  --purple:#A855F7;--input-bg:#0d1220;
+  --amber:#FF7200;--amber-dim:rgba(255,114,0,0.12);
+  --purple:#3AA5DC;--input-bg:#071220;
 }
 *{margin:0;padding:0;box-sizing:border-box}
 body{background:var(--bg);color:var(--text);font-family:'DM Sans',sans-serif;min-height:100vh}
 .noise{position:fixed;top:0;left:0;width:100%;height:100%;background-image:url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.03'/%3E%3C/svg%3E");pointer-events:none;z-index:0}
 .glow-orb{position:fixed;border-radius:50%;filter:blur(120px);opacity:.07;pointer-events:none;z-index:0}
-.glow-orb.blue{width:500px;height:500px;background:#3B82F6;top:-100px;right:-100px}
-.glow-orb.purple{width:400px;height:400px;background:#A855F7;bottom:5%;left:-80px}
+.glow-orb.blue{width:500px;height:500px;background:#00A8E0;top:-100px;right:-100px}
+.glow-orb.purple{width:400px;height:400px;background:#067AB4;bottom:5%;left:-80px}
 
 .app{position:relative;z-index:1;max-width:1350px;margin:0 auto;padding:24px 20px 60px}
 
 /* ── Buttons ── */
 .btn{padding:9px 18px;border-radius:10px;border:none;font-family:'DM Sans',sans-serif;font-size:12px;font-weight:600;cursor:pointer;transition:all .2s;display:inline-flex;align-items:center;gap:5px}
-.btn-primary{background:var(--accent);color:#fff}.btn-primary:hover{background:#2563EB;transform:translateY(-1px)}
+.btn-primary{background:var(--accent);color:#fff}.btn-primary:hover{background:#0090C0;transform:translateY(-1px)}
 .btn-secondary{background:var(--card);color:var(--text);border:1px solid var(--border)}.btn-secondary:hover{border-color:var(--accent)}
 .btn-success{background:var(--green);color:#fff}.btn-success:hover{background:#16A34A}
 .btn-danger{background:var(--red);color:#fff;font-size:11px;padding:5px 10px}.btn-danger:hover{background:#DC2626}
@@ -40,7 +41,7 @@ body{background:var(--bg);color:var(--text);font-family:'DM Sans',sans-serif;min
 /* ── Login Screen ── */
 .login-screen{display:flex;align-items:center;justify-content:center;min-height:80vh;flex-direction:column;gap:32px;animation:fadeUp .5s ease}
 .login-card{background:var(--card);border:1px solid var(--border);border-radius:20px;padding:40px;max-width:480px;width:100%;text-align:center}
-.login-card .icon{width:60px;height:60px;border-radius:16px;background:linear-gradient(135deg,var(--accent),var(--purple));display:inline-flex;align-items:center;justify-content:center;font-size:26px;font-weight:800;color:#fff;margin-bottom:16px}
+.login-card .icon{width:60px;height:60px;border-radius:16px;background:linear-gradient(135deg,#00A8E0,#067AB4);display:inline-flex;align-items:center;justify-content:center;font-size:26px;font-weight:800;color:#fff;margin-bottom:16px}
 .login-card h2{font-family:'Plus Jakarta Sans',sans-serif;font-size:24px;font-weight:800;margin-bottom:6px}
 .login-card p{color:var(--text-dim);font-size:13px;margin-bottom:24px}
 .login-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
@@ -50,10 +51,10 @@ body{background:var(--bg);color:var(--text);font-family:'DM Sans',sans-serif;min
 .login-btn .role-name{font-size:14px;font-weight:600;color:var(--text)}
 .login-btn .role-sub{font-size:10px;color:var(--text-dim);margin-top:2px}
 .login-btn.coord .role-tag{color:var(--purple)}
-.login-btn.coord:hover{border-color:var(--purple);background:rgba(168,85,247,.1)}
+.login-btn.coord:hover{border-color:var(--purple);background:rgba(6,122,180,.1)}
 .login-btn.mgr{grid-column:1/-1}
 .login-btn.mgr .role-tag{color:var(--amber)}
-.login-btn.mgr:hover{border-color:var(--amber);background:rgba(245,158,11,.1)}
+.login-btn.mgr:hover{border-color:var(--amber);background:rgba(255,114,0,.1)}
 
 /* ── Top Bar ── */
 .top-bar{display:flex;align-items:center;justify-content:space-between;margin-bottom:24px;flex-wrap:wrap;gap:12px}
@@ -102,9 +103,9 @@ body{background:var(--bg);color:var(--text);font-family:'DM Sans',sans-serif;min
 .data-table tfoot td{padding:8px 3px;text-align:center;font-weight:700;font-size:12px;border-top:2px solid var(--accent);color:var(--accent)}
 .data-table tfoot td:first-child{text-align:left;padding-left:14px}
 
-.data-table input[type="number"]{background:var(--input-bg);border:1px solid var(--border);border-radius:5px;color:#fff;padding:4px 2px;font-size:12px;font-family:'DM Sans',sans-serif;width:46px;text-align:center;transition:all .2s}
+.data-table input[type="number"]{background:var(--input-bg);border:1px solid var(--border);border-radius:5px;color:#fff;padding:4px 2px;font-size:12px;font-family:'DM Sans',sans-serif;width:52px;text-align:center;transition:all .2s}
 .data-table input[type="number"]:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 2px var(--accent-glow)}
-.data-table input[type="number"]::-webkit-inner-spin-button{opacity:0}
+.data-table input[type="number"]::-webkit-inner-spin-button,.data-table input[type="number"]::-webkit-outer-spin-button{opacity:1;cursor:pointer;filter:invert(1) brightness(2)}
 
 .cc{color:var(--text-dim);font-style:italic}
 .cc.g{color:var(--green);font-weight:600;font-style:normal}
@@ -116,7 +117,7 @@ body{background:var(--bg);color:var(--text);font-family:'DM Sans',sans-serif;min
 .report-container{max-width:1100px;margin:0 auto}
 .report-header{text-align:center;margin-bottom:32px}
 .report-header .badge{display:inline-block;background:var(--accent-glow);color:var(--accent);font-size:9px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;padding:4px 12px;border-radius:20px;border:1px solid rgba(59,130,246,.2);margin-bottom:10px}
-.report-header h2{font-family:'Plus Jakarta Sans',sans-serif;font-size:26px;font-weight:800;background:linear-gradient(135deg,#fff,#94a3b8);-webkit-background-clip:text;-webkit-text-fill-color:transparent;margin-bottom:5px}
+.report-header h2{font-family:'Plus Jakarta Sans',sans-serif;font-size:26px;font-weight:800;color:#ffffff;margin-bottom:5px}
 .report-header p{color:var(--text-dim);font-size:12px}
 
 .kpi-grid{display:grid;grid-template-columns:repeat(6,1fr);gap:10px;margin-bottom:28px}
@@ -149,7 +150,7 @@ body{background:var(--bg);color:var(--text);font-family:'DM Sans',sans-serif;min
 .mini-bar{height:4px;border-radius:2px}
 .status-dot{width:6px;height:6px;border-radius:50%;display:inline-block;margin-right:3px}
 .status-dot.on-track{background:var(--green);box-shadow:0 0 4px rgba(34,197,94,.4)}
-.status-dot.at-risk{background:var(--amber);box-shadow:0 0 4px rgba(245,158,11,.4)}
+.status-dot.at-risk{background:var(--amber);box-shadow:0 0 4px rgba(255,114,0,.4)}
 .status-dot.behind{background:var(--red);box-shadow:0 0 4px rgba(239,68,68,.4)}
 
 .insights-grid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-bottom:20px}
@@ -333,16 +334,16 @@ body{background:var(--bg);color:var(--text);font-family:'DM Sans',sans-serif;min
 // ══════════════════════════════════════════════
 const ORG = {
   coordinators: {
-    eduardo: { name: 'Eduardo', color: '#A855F7', supervisors: ['reyna','alan','carlos','alfredo'] },
-    luisa:   { name: 'Luisa',   color: '#EC4899', supervisors: ['jorge','maria'] },
+    eduardo: { name: 'Eduardo', color: '#3AA5DC', supervisors: ['reyna','alan','carlos','alfredo'] },
+    luisa:   { name: 'Luisa',   color: '#FCB314', supervisors: ['jorge','maria'] },
   },
   supervisors: {
     reyna:   { name: 'Reyna Lizzette Mtz. G.',   short: 'Reyna L.',   coord: 'eduardo', meta: 137 },
-    alan:    { name: 'Alan Uziel Salazar A.',     short: 'Alan U.',    coord: 'eduardo', meta: 138 },
-    carlos:  { name: 'Carlos Alberto Aguilar',    short: 'Carlos A.',  coord: 'eduardo', meta: 126 },
-    alfredo: { name: 'Alfredo Cabrera P.',        short: 'Alfredo C.', coord: 'eduardo', meta: 133 },
-    jorge:   { name: 'Jorge Miguel Ureña Z.',     short: 'Jorge M.',   coord: 'luisa',   meta: 128 },
-    maria:   { name: 'María Fernanda Mtz. B.',    short: 'María F.',   coord: 'luisa',   meta: 130 },
+    alan:    { name: 'Alan Uziel Salazar A.',    short: 'Alan U.',    coord: 'eduardo', meta: 138 },
+    carlos:  { name: 'Carlos Alberto Aguilar',   short: 'Carlos A.',  coord: 'eduardo', meta: 126 },
+    alfredo: { name: 'Alfredo Cabrera P.',       short: 'Alfredo C.', coord: 'eduardo', meta: 133 },
+    jorge:   { name: 'Jorge Miguel Ureña Z.',    short: 'Jorge M.',   coord: 'luisa',   meta: 128 },
+    maria:   { name: 'María Fernanda Mtz. B.',   short: 'María F.',   coord: 'luisa',   meta: 130 },
   },
   // Agent rosters (populated by supervisors)
   agents: {
@@ -375,7 +376,7 @@ function loginAs(role, id) {
   const urole = document.getElementById('userRole');
 
   if (role === 'mgr') {
-    avatar.style.background = 'linear-gradient(135deg,#F59E0B,#EF4444)';
+    avatar.style.background = 'linear-gradient(135deg,#FF7200,#FCB314)';
     avatar.textContent = 'JN';
     uname.textContent = 'Jonathan';
     urole.textContent = 'Sales Manager · Vista completa';
@@ -817,7 +818,29 @@ function buildReport() {
         <div class="chart-card"><h3>% Conversión Back Feb</h3><div class="chart-wrap sh"><canvas id="rC4"></canvas></div></div>
       </div>
       <div class="chart-grid">
-        <div class="chart-card full"><h3>Desglose Pipeline en Tránsito (${tT} totales)</h3><div class="chart-wrap sh"><canvas id="rC5"></canvas></div></div>
+        <div class="chart-card full"><h3>Desglose Pipeline en Tránsito (${tT} totales)</h3>
+          <div class="chart-wrap sh"><canvas id="rC5"></canvas></div>
+          <table class="pipe-table" style="width:100%;border-collapse:collapse;margin-top:10px;font-size:10px">
+            <thead><tr style="border-bottom:1px solid rgba(255,255,255,.1)">
+              <th style="text-align:left;padding:6px 8px;color:var(--text-dim);font-size:8px;text-transform:uppercase;letter-spacing:.5px">${label}</th>
+              <th style="text-align:center;padding:6px 4px;color:#067AB4;font-size:8px">Entrega</th>
+              <th style="text-align:center;padding:6px 4px;color:#3AA5DC;font-size:8px">Prep.</th>
+              <th style="text-align:center;padding:6px 4px;color:#FCB314;font-size:8px">Solic.</th>
+              <th style="text-align:center;padding:6px 4px;color:#FF7200;font-size:8px">Back Off.</th>
+              <th style="text-align:center;padding:6px 4px;color:#EF4444;font-size:8px">S/Venta</th>
+              <th style="text-align:center;padding:6px 4px;color:var(--text);font-size:8px;font-weight:700">Total</th>
+            </tr></thead>
+            <tbody>${data.map(d=>`<tr style="border-bottom:1px solid rgba(255,255,255,.04)">
+              <td style="text-align:left;padding:5px 8px;font-weight:600">${d.short}</td>
+              <td style="text-align:center;padding:5px 4px">${d.entrega}</td>
+              <td style="text-align:center;padding:5px 4px">${d.prep}</td>
+              <td style="text-align:center;padding:5px 4px">${d.solic}</td>
+              <td style="text-align:center;padding:5px 4px">${d.backoff}</td>
+              <td style="text-align:center;padding:5px 4px">${d.sinventa}</td>
+              <td style="text-align:center;padding:5px 4px;font-weight:700;color:var(--accent)">${d.transito}</td>
+            </tr>`).join('')}</tbody>
+          </table>
+        </div>
       </div>
       <div style="height:12px"></div>
       <div class="section-title"><span class="dot"></span>Detalle por ${label}</div>
@@ -829,19 +852,19 @@ function buildReport() {
         <tbody id="rTBody"></tbody>
         <tfoot id="rTFoot"></tfoot>
       </table>
-      <div class="section-title"><span class="dot" style="background:var(--amber)"></span>Puntos Clave</div>
+      <div class="section-title"><span class="dot" style="background:var(--amber)"></span>Resumen Ejecutivo</div>
       <div class="insights-grid">
+        <div class="insight-card" style="border-left:3px solid var(--accent)">
+          <h4 style="color:var(--accent)">📊 Avance General</h4>
+          <p>El equipo lleva <strong>${tV} de ${tM}</strong> ventas (<strong>${tAv.toFixed(1)}%</strong>). Quedan <strong>${dias} días</strong> para cerrar las <strong>${tF}</strong> ventas restantes. Se requieren <strong>${tD.toFixed(1)} programadas/día</strong> como equipo.</p>
+        </div>
+        <div class="insight-card" style="border-left:3px solid var(--purple)">
+          <h4 style="color:var(--purple)">⚡ Pipeline Activo</h4>
+          <p><strong>${tT} ET en tránsito:</strong> ${tE} en entrega, ${tP} en preparación, ${tBO} en back office. Los <strong>${tSV} entregados sin venta</strong> representan oportunidad de recuperación inmediata.</p>
+        </div>
         <div class="insight-card" style="border-left:3px solid var(--green)">
-          <h4 style="color:var(--green)">🏆 Mejor Avance</h4>
-          <p><strong>${data[bestI].name}</strong> lidera con ${data[bestI].ventas} ventas (${data[bestI].avance.toFixed(1)}%). Meta diaria: <strong>${data[bestI].diaria.toFixed(1)}</strong></p>
-        </div>
-        <div class="insight-card" style="border-left:3px solid var(--amber)">
-          <h4 style="color:var(--amber)">⚡ Pipeline</h4>
-          <p><strong>${tT} ET en tránsito:</strong> ${tE} entrega, ${tP} preparación, ${tBO} back office. <strong>${tSV}</strong> sin venta por recuperar.</p>
-        </div>
-        <div class="insight-card" style="border-left:3px solid var(--red)">
-          <h4 style="color:var(--red)">🎯 Foco</h4>
-          <p><strong>${data[worstI].name}</strong> menor avance (${data[worstI].avance.toFixed(1)}%). Conv. más baja: <strong>${data[lowConv].short}</strong> (${data[lowConv].conv.toFixed(1)}%)</p>
+          <h4 style="color:var(--green)">🎯 Conversión</h4>
+          <p>Conversión promedio del equipo: <strong>${tC.toFixed(1)}%</strong>. ${data.filter(d=>d.conv>=85).length} de ${data.length} ${label.toLowerCase()}s superan el 85%. Mejorar la conversión general en 2pts reduce la meta diaria programada significativamente.</p>
         </div>
       </div>
       <div class="report-footer"><p>ExpertCell · Distribuidor Autorizado AT&T · ${periodo} · ${titleName}</p></div>
@@ -875,43 +898,80 @@ function buildReport() {
   </tr>`;
 
   // Charts
+  Chart.register(ChartDataLabels);
   Chart.defaults.color = '#7A8599';
   Chart.defaults.borderColor = 'rgba(255,255,255,0.06)';
   Chart.defaults.font.family = "'DM Sans',sans-serif";
   Chart.defaults.font.size = data.length > 12 ? 8 : 10;
+  // Disable datalabels globally, enable per chart
+  Chart.defaults.plugins.datalabels = { display: false };
 
   const chartLabels = data.length > 12 ? data.map((_,i) => `#${i+1}`) : shorts;
+  const dlFontSize = data.length > 10 ? 7 : 9;
 
+  // Ventas vs Meta - show values on ventas bars
   chartInstances.push(new Chart(document.getElementById('rC1'), {
     type:'bar', data:{labels:chartLabels,datasets:[
-      {label:'Ventas',data:data.map(d=>d.ventas),backgroundColor:'#3B82F6',borderRadius:5,barPercentage:.5},
-      {label:'Meta',data:data.map(d=>d.meta),backgroundColor:'rgba(255,255,255,.08)',borderRadius:5,barPercentage:.5}
-    ]}, options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:'top',labels:{usePointStyle:true,pointStyle:'circle',padding:12,font:{size:9}}}},scales:{y:{beginAtZero:true,grid:{color:'rgba(255,255,255,.04)'}},x:{grid:{display:false}}}}
+      {label:'Ventas',data:data.map(d=>d.ventas),backgroundColor:'#00A8E0',borderRadius:5,barPercentage:.5,
+        datalabels:{display:true,anchor:'end',align:'end',color:'#00A8E0',font:{size:dlFontSize,weight:'bold'}}},
+      {label:'Meta',data:data.map(d=>d.meta),backgroundColor:'rgba(255,255,255,.08)',borderRadius:5,barPercentage:.5,
+        datalabels:{display:false}}
+    ]}, options:{responsive:true,maintainAspectRatio:false,
+      plugins:{legend:{position:'top',labels:{usePointStyle:true,pointStyle:'circle',padding:12,font:{size:9}}}},
+      scales:{y:{beginAtZero:true,grid:{color:'rgba(255,255,255,.04)'}},x:{grid:{display:false}}}}
   }));
 
+  // % Avance - horizontal bars with % labels
   chartInstances.push(new Chart(document.getElementById('rC2'), {
-    type:'bar', data:{labels:chartLabels,datasets:[{data:data.map(d=>+d.avance.toFixed(1)),backgroundColor:data.map(d=>d.avance>=60?'#22C55E':d.avance>=45?'#F59E0B':'#EF4444'),borderRadius:5,barPercentage:.55}]},
-    options:{indexAxis:'y',responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>c.parsed.x+'%'}}},scales:{x:{beginAtZero:true,max:100,grid:{color:'rgba(255,255,255,.04)'},ticks:{callback:v=>v+'%'}},y:{grid:{display:false}}}}
+    type:'bar', data:{labels:chartLabels,datasets:[{data:data.map(d=>+d.avance.toFixed(1)),
+      backgroundColor:data.map(d=>d.avance>=60?'#22C55E':d.avance>=45?'#FF7200':'#EF4444'),borderRadius:5,barPercentage:.55,
+      datalabels:{display:true,anchor:'end',align:'end',font:{size:dlFontSize,weight:'bold'},
+        color:function(ctx){const v=ctx.dataset.data[ctx.dataIndex];return v>=60?'#22C55E':v>=45?'#FF7200':'#EF4444'},
+        formatter:function(v){return v+'%'}}}]},
+    options:{indexAxis:'y',responsive:true,maintainAspectRatio:false,
+      plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>c.parsed.x+'%'}}},
+      scales:{x:{beginAtZero:true,max:100,grid:{color:'rgba(255,255,255,.04)'},ticks:{callback:v=>v+'%'}},y:{grid:{display:false}}}}
   }));
 
+  // Meta Diaria - vertical bars with value labels
   chartInstances.push(new Chart(document.getElementById('rC3'), {
-    type:'bar', data:{labels:chartLabels,datasets:[{data:data.map(d=>+d.diaria.toFixed(1)),backgroundColor:data.map(d=>d.diaria<=8?'#22C55E':d.diaria<=10?'#F59E0B':'#EF4444'),borderRadius:5,barPercentage:.55}]},
-    options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},scales:{y:{beginAtZero:true,grid:{color:'rgba(255,255,255,.04)'}},x:{grid:{display:false}}}}
+    type:'bar', data:{labels:chartLabels,datasets:[{data:data.map(d=>+d.diaria.toFixed(1)),
+      backgroundColor:data.map(d=>d.diaria<=8?'#22C55E':d.diaria<=10?'#FF7200':'#EF4444'),borderRadius:5,barPercentage:.55,
+      datalabels:{display:true,anchor:'end',align:'end',font:{size:dlFontSize,weight:'bold'},
+        color:function(ctx){const v=ctx.dataset.data[ctx.dataIndex];return v<=8?'#22C55E':v<=10?'#FF7200':'#EF4444'}}}]},
+    options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},
+      scales:{y:{beginAtZero:true,grid:{color:'rgba(255,255,255,.04)'}},x:{grid:{display:false}}}}
   }));
 
+  // % Conversión - horizontal bars with % labels
   chartInstances.push(new Chart(document.getElementById('rC4'), {
-    type:'bar', data:{labels:chartLabels,datasets:[{data:data.map(d=>+d.conv.toFixed(1)),backgroundColor:data.map(d=>d.conv>=85?'#22C55E':d.conv>=80?'#F59E0B':'#EF4444'),borderRadius:5,barPercentage:.55}]},
-    options:{indexAxis:'y',responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>c.parsed.x+'%'}}},scales:{x:{beginAtZero:true,max:100,grid:{color:'rgba(255,255,255,.04)'},ticks:{callback:v=>v+'%'}},y:{grid:{display:false}}}}
+    type:'bar', data:{labels:chartLabels,datasets:[{data:data.map(d=>+d.conv.toFixed(1)),
+      backgroundColor:data.map(d=>d.conv>=85?'#22C55E':d.conv>=80?'#FF7200':'#EF4444'),borderRadius:5,barPercentage:.55,
+      datalabels:{display:true,anchor:'end',align:'end',font:{size:dlFontSize,weight:'bold'},
+        color:function(ctx){const v=ctx.dataset.data[ctx.dataIndex];return v>=85?'#22C55E':v>=80?'#FF7200':'#EF4444'},
+        formatter:function(v){return v+'%'}}}]},
+    options:{indexAxis:'y',responsive:true,maintainAspectRatio:false,
+      plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>c.parsed.x+'%'}}},
+      scales:{x:{beginAtZero:true,max:100,grid:{color:'rgba(255,255,255,.04)'},ticks:{callback:v=>v+'%'}},y:{grid:{display:false}}}}
   }));
 
+  // Pipeline stacked — clean bars, total label on top, detail in table below
+  const pipeNoDl = {display:false};
+  // Calculate running totals for top label on last dataset
+  const pipeTotals = data.map(d=>d.transito);
   chartInstances.push(new Chart(document.getElementById('rC5'), {
     type:'bar', data:{labels:chartLabels,datasets:[
-      {label:'En Entrega',data:data.map(d=>d.entrega),backgroundColor:'#6366F1',borderRadius:3},
-      {label:'En Preparación',data:data.map(d=>d.prep),backgroundColor:'#A855F7',borderRadius:3},
-      {label:'Solicitado',data:data.map(d=>d.solic),backgroundColor:'#EC4899',borderRadius:3},
-      {label:'Back Office',data:data.map(d=>d.backoff),backgroundColor:'#F59E0B',borderRadius:3},
-      {label:'Entreg. s/v',data:data.map(d=>d.sinventa),backgroundColor:'rgba(239,68,68,.6)',borderRadius:3},
-    ]}, options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:'top',labels:{usePointStyle:true,pointStyle:'circle',padding:10,font:{size:8}}},tooltip:{callbacks:{afterBody:c=>'Total: '+data[c[0].dataIndex].transito}}},scales:{x:{stacked:true,grid:{display:false}},y:{stacked:true,grid:{color:'rgba(255,255,255,.04)'}}}}
+      {label:'En Entrega',data:data.map(d=>d.entrega),backgroundColor:'#067AB4',borderRadius:0,datalabels:pipeNoDl},
+      {label:'En Preparación',data:data.map(d=>d.prep),backgroundColor:'#3AA5DC',borderRadius:0,datalabels:pipeNoDl},
+      {label:'Solicitado',data:data.map(d=>d.solic),backgroundColor:'#FCB314',borderRadius:0,datalabels:pipeNoDl},
+      {label:'Back Office',data:data.map(d=>d.backoff),backgroundColor:'#FF7200',borderRadius:0,datalabels:pipeNoDl},
+      {label:'Entreg. s/v',data:data.map(d=>d.sinventa),backgroundColor:'rgba(239,68,68,.8)',borderRadius:{topLeft:3,topRight:3},
+        datalabels:{display:true,anchor:'end',align:'end',color:'#fff',font:{size:dlFontSize+1,weight:'bold'},
+          formatter:function(v,ctx){return pipeTotals[ctx.dataIndex]}}},
+    ]}, options:{responsive:true,maintainAspectRatio:false,
+      plugins:{legend:{position:'top',labels:{usePointStyle:true,pointStyle:'circle',padding:10,font:{size:8}}},
+        tooltip:{callbacks:{afterBody:c=>'Total: '+data[c[0].dataIndex].transito}}},
+      scales:{x:{stacked:true,grid:{display:false}},y:{stacked:true,grid:{color:'rgba(255,255,255,.04)'}}}}
   }));
 }
 
@@ -922,7 +982,10 @@ async function downloadPDF() {
   const wasInput = document.getElementById('panelInput').classList.contains('active');
   switchTab('report');
   document.getElementById('loadingOverlay').classList.add('show');
-  await new Promise(r => setTimeout(r, 600));
+  await new Promise(r => setTimeout(r, 1500));
+  // Force chart animations to complete
+  chartInstances.forEach(c => { c.options.animation = false; c.update('none'); });
+  await new Promise(r => setTimeout(r, 500));
   try {
     const el = document.getElementById('reportPreview');
     const canvas = await html2canvas(el, { backgroundColor:'#0B0F1A', scale:2, useCORS:true, logging:false });
@@ -962,7 +1025,7 @@ if (INJECTED_DATA) {
       Object.assign(ORG.supData, INJECTED_DATA.supData);
   }
   if (INJECTED_DATA.agents) {
-      // ✅ Allow manually typed Back Feb data to persist if Python sends 0
+      // Permitir que la info de Back Feb que se edite a mano se mantenga si Streamlit manda 0
       for (const [supId, agents] of Object.entries(INJECTED_DATA.agents)) {
           if (ORG.agents[supId] && ORG.agents[supId].length > 0) {
               agents.forEach((agent, i) => {
@@ -975,7 +1038,7 @@ if (INJECTED_DATA) {
       Object.assign(ORG.agents, INJECTED_DATA.agents);
   }
   
-  // 2. Update the dynamic config fields (Days and Period)
+  // 2. Actualizar parámetros dinámicos de Python (Días y Periodo)
   if (INJECTED_DATA.diasRestantes !== undefined) {
       const diasInput = document.getElementById('diasRestantes');
       if(diasInput) diasInput.value = INJECTED_DATA.diasRestantes;
@@ -985,9 +1048,9 @@ if (INJECTED_DATA) {
       if(periodoInput) periodoInput.value = INJECTED_DATA.periodo;
   }
 
-  console.log("Live data successfully injected from Streamlit!");
+  console.log("Datos inyectados exitosamente por Streamlit");
   
-  // 3. Re-render the table if a user is currently logged in
+  // 3. Re-renderizar todo si hay un usuario logueado en la ventana
   if (currentUser && typeof buildInputTable === 'function') {
       buildInputTable();
       if (document.getElementById('panelReport').classList.contains('active')) {
