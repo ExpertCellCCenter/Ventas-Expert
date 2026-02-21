@@ -758,6 +758,7 @@ function computeReport() {
   });
 }
 
+/* ✅ UPDATED buildReport() ONLY (aesthetic + adaptive charts) */
 function buildReport() {
   destroyCharts(); recalcAll();
   const data = computeReport();
@@ -810,12 +811,12 @@ function buildReport() {
         <div class="kpi"><div class="kl">Pipeline</div><div class="kv" style="color:var(--purple)">${tT}</div><div class="ks">en tránsito</div></div>
       </div>
       <div class="chart-grid">
-        <div class="chart-card"><h3>Ventas vs Meta</h3><div class="chart-wrap"><canvas id="rC1"></canvas></div></div>
-        <div class="chart-card"><h3>% Avance hacia Meta</h3><div class="chart-wrap"><canvas id="rC2"></canvas></div></div>
+        <div class="chart-card"><h3>Ventas vs Meta</h3><div class="chart-wrap" id="cwVM"></div></div>
+        <div class="chart-card"><h3>% Avance hacia Meta</h3><div class="chart-wrap" id="cwAv"></div></div>
       </div>
       <div class="chart-grid">
-        <div class="chart-card"><h3>Meta Diaria Programadas</h3><div class="chart-wrap sh"><canvas id="rC3"></canvas></div></div>
-        <div class="chart-card"><h3>% Conversión Back Feb</h3><div class="chart-wrap sh"><canvas id="rC4"></canvas></div></div>
+        <div class="chart-card"><h3>Meta Diaria Programadas</h3><div class="chart-wrap" id="cwDi"></div></div>
+        <div class="chart-card"><h3>% Conversión Back Feb</h3><div class="chart-wrap" id="cwCo"></div></div>
       </div>
       <div class="chart-grid">
         <div class="chart-card full"><h3>Desglose Pipeline en Tránsito (${tT} totales)</h3>
@@ -897,35 +898,68 @@ function buildReport() {
     <td>${tC.toFixed(1)}%</td><td>${tMB.toFixed(1)}</td><td>${tD.toFixed(1)}</td><td>${tMDesde.toFixed(1)}</td><td></td>
   </tr>`;
 
-  // Charts
+  // Charts — adaptive layout
   Chart.register(ChartDataLabels);
   Chart.defaults.color = '#7A8599';
   Chart.defaults.borderColor = 'rgba(255,255,255,0.06)';
   Chart.defaults.font.family = "'DM Sans',sans-serif";
-  Chart.defaults.font.size = data.length > 12 ? 8 : 10;
-  // Disable datalabels globally, enable per chart
   Chart.defaults.plugins.datalabels = { display: false };
 
-  const chartLabels = data.length > 12 ? data.map((_,i) => `#${i+1}`) : shorts;
-  const dlFontSize = data.length > 10 ? 7 : 9;
+  const n = data.length;
+  const isLarge = n > 8;
+  const dlFs = isLarge ? 8 : 9;
+  const barH = isLarge ? Math.max(n * 28, 240) : 240; // dynamic height for horizontal charts
+  const barHv = isLarge ? Math.max(n * 22, 240) : 240;
 
-  // Ventas vs Meta - show values on ventas bars
-  chartInstances.push(new Chart(document.getElementById('rC1'), {
-    type:'bar', data:{labels:chartLabels,datasets:[
-      {label:'Ventas',data:data.map(d=>d.ventas),backgroundColor:'#00A8E0',borderRadius:5,barPercentage:.5,
-        datalabels:{display:true,anchor:'end',align:'end',color:'#00A8E0',font:{size:dlFontSize,weight:'bold'}}},
-      {label:'Meta',data:data.map(d=>d.meta),backgroundColor:'rgba(255,255,255,.08)',borderRadius:5,barPercentage:.5,
-        datalabels:{display:false}}
-    ]}, options:{responsive:true,maintainAspectRatio:false,
-      plugins:{legend:{position:'top',labels:{usePointStyle:true,pointStyle:'circle',padding:12,font:{size:9}}}},
-      scales:{y:{beginAtZero:true,grid:{color:'rgba(255,255,255,.04)'}},x:{grid:{display:false}}}}
-  }));
+  // Use first name only for labels when many members
+  const chartLabels = data.map(d => {
+    const parts = d.name.split(' ');
+    if (n > 14) return parts[0]; // just first name
+    if (n > 8) return parts.slice(0,2).join(' '); // first + second
+    return d.short;
+  });
 
-  // % Avance - horizontal bars with % labels
-  chartInstances.push(new Chart(document.getElementById('rC2'), {
+  Chart.defaults.font.size = isLarge ? 8 : 10;
+
+  // Helper: create canvas inside container with dynamic height
+  function makeCanvas(containerId, height) {
+    const wrap = document.getElementById(containerId);
+    wrap.style.height = height + 'px';
+    const c = document.createElement('canvas');
+    wrap.appendChild(c);
+    return c;
+  }
+
+  // 1. Ventas vs Meta — horizontal when many, vertical when few
+  if (isLarge) {
+    chartInstances.push(new Chart(makeCanvas('cwVM', barH), {
+      type:'bar', data:{labels:chartLabels,datasets:[
+        {label:'Ventas',data:data.map(d=>d.ventas),backgroundColor:'#00A8E0',borderRadius:4,barPercentage:.6,
+          datalabels:{display:true,anchor:'end',align:'end',color:'#00A8E0',font:{size:dlFs,weight:'bold'}}},
+        {label:'Meta',data:data.map(d=>d.meta),backgroundColor:'rgba(255,255,255,.08)',borderRadius:4,barPercentage:.6,
+          datalabels:{display:true,anchor:'end',align:'end',color:'#556677',font:{size:dlFs-1}}}
+      ]}, options:{indexAxis:'y',responsive:true,maintainAspectRatio:false,
+        plugins:{legend:{position:'top',labels:{usePointStyle:true,pointStyle:'circle',padding:10,font:{size:8}}}},
+        scales:{x:{beginAtZero:true,grid:{color:'rgba(255,255,255,.04)'}},y:{grid:{display:false}}}}
+    }));
+  } else {
+    chartInstances.push(new Chart(makeCanvas('cwVM', 240), {
+      type:'bar', data:{labels:chartLabels,datasets:[
+        {label:'Ventas',data:data.map(d=>d.ventas),backgroundColor:'#00A8E0',borderRadius:5,barPercentage:.5,
+          datalabels:{display:true,anchor:'end',align:'end',color:'#00A8E0',font:{size:dlFs,weight:'bold'}}},
+        {label:'Meta',data:data.map(d=>d.meta),backgroundColor:'rgba(255,255,255,.08)',borderRadius:5,barPercentage:.5,
+          datalabels:{display:false}}
+      ]}, options:{responsive:true,maintainAspectRatio:false,
+        plugins:{legend:{position:'top',labels:{usePointStyle:true,pointStyle:'circle',padding:12,font:{size:9}}}},
+        scales:{y:{beginAtZero:true,grid:{color:'rgba(255,255,255,.04)'}},x:{grid:{display:false}}}}
+    }));
+  }
+
+  // 2. % Avance — always horizontal
+  chartInstances.push(new Chart(makeCanvas('cwAv', barH), {
     type:'bar', data:{labels:chartLabels,datasets:[{data:data.map(d=>+d.avance.toFixed(1)),
-      backgroundColor:data.map(d=>d.avance>=60?'#22C55E':d.avance>=45?'#FF7200':'#EF4444'),borderRadius:5,barPercentage:.55,
-      datalabels:{display:true,anchor:'end',align:'end',font:{size:dlFontSize,weight:'bold'},
+      backgroundColor:data.map(d=>d.avance>=60?'#22C55E':d.avance>=45?'#FF7200':'#EF4444'),borderRadius:4,barPercentage:.6,
+      datalabels:{display:true,anchor:'end',align:'end',font:{size:dlFs,weight:'bold'},
         color:function(ctx){const v=ctx.dataset.data[ctx.dataIndex];return v>=60?'#22C55E':v>=45?'#FF7200':'#EF4444'},
         formatter:function(v){return v+'%'}}}]},
     options:{indexAxis:'y',responsive:true,maintainAspectRatio:false,
@@ -933,21 +967,32 @@ function buildReport() {
       scales:{x:{beginAtZero:true,max:100,grid:{color:'rgba(255,255,255,.04)'},ticks:{callback:v=>v+'%'}},y:{grid:{display:false}}}}
   }));
 
-  // Meta Diaria - vertical bars with value labels
-  chartInstances.push(new Chart(document.getElementById('rC3'), {
-    type:'bar', data:{labels:chartLabels,datasets:[{data:data.map(d=>+d.diaria.toFixed(1)),
-      backgroundColor:data.map(d=>d.diaria<=8?'#22C55E':d.diaria<=10?'#FF7200':'#EF4444'),borderRadius:5,barPercentage:.55,
-      datalabels:{display:true,anchor:'end',align:'end',font:{size:dlFontSize,weight:'bold'},
-        color:function(ctx){const v=ctx.dataset.data[ctx.dataIndex];return v<=8?'#22C55E':v<=10?'#FF7200':'#EF4444'}}}]},
-    options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},
-      scales:{y:{beginAtZero:true,grid:{color:'rgba(255,255,255,.04)'}},x:{grid:{display:false}}}}
-  }));
+  // 3. Meta Diaria — horizontal when many
+  if (isLarge) {
+    chartInstances.push(new Chart(makeCanvas('cwDi', barHv), {
+      type:'bar', data:{labels:chartLabels,datasets:[{data:data.map(d=>+d.diaria.toFixed(1)),
+        backgroundColor:data.map(d=>d.diaria<=8?'#22C55E':d.diaria<=10?'#FF7200':'#EF4444'),borderRadius:4,barPercentage:.6,
+        datalabels:{display:true,anchor:'end',align:'end',font:{size:dlFs,weight:'bold'},
+          color:function(ctx){const v=ctx.dataset.data[ctx.dataIndex];return v<=8?'#22C55E':v<=10?'#FF7200':'#EF4444'}}}]},
+      options:{indexAxis:'y',responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},
+        scales:{x:{beginAtZero:true,grid:{color:'rgba(255,255,255,.04)'}},y:{grid:{display:false}}}}
+    }));
+  } else {
+    chartInstances.push(new Chart(makeCanvas('cwDi', 200), {
+      type:'bar', data:{labels:chartLabels,datasets:[{data:data.map(d=>+d.diaria.toFixed(1)),
+        backgroundColor:data.map(d=>d.diaria<=8?'#22C55E':d.diaria<=10?'#FF7200':'#EF4444'),borderRadius:5,barPercentage:.55,
+        datalabels:{display:true,anchor:'end',align:'end',font:{size:dlFs,weight:'bold'},
+          color:function(ctx){const v=ctx.dataset.data[ctx.dataIndex];return v<=8?'#22C55E':v<=10?'#FF7200':'#EF4444'}}}]},
+      options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},
+        scales:{y:{beginAtZero:true,grid:{color:'rgba(255,255,255,.04)'}},x:{grid:{display:false}}}}
+    }));
+  }
 
-  // % Conversión - horizontal bars with % labels
-  chartInstances.push(new Chart(document.getElementById('rC4'), {
+  // 4. % Conversión — always horizontal
+  chartInstances.push(new Chart(makeCanvas('cwCo', barH), {
     type:'bar', data:{labels:chartLabels,datasets:[{data:data.map(d=>+d.conv.toFixed(1)),
-      backgroundColor:data.map(d=>d.conv>=85?'#22C55E':d.conv>=80?'#FF7200':'#EF4444'),borderRadius:5,barPercentage:.55,
-      datalabels:{display:true,anchor:'end',align:'end',font:{size:dlFontSize,weight:'bold'},
+      backgroundColor:data.map(d=>d.conv>=85?'#22C55E':d.conv>=80?'#FF7200':'#EF4444'),borderRadius:4,barPercentage:.6,
+      datalabels:{display:true,anchor:'end',align:'end',font:{size:dlFs,weight:'bold'},
         color:function(ctx){const v=ctx.dataset.data[ctx.dataIndex];return v>=85?'#22C55E':v>=80?'#FF7200':'#EF4444'},
         formatter:function(v){return v+'%'}}}]},
     options:{indexAxis:'y',responsive:true,maintainAspectRatio:false,
@@ -955,23 +1000,31 @@ function buildReport() {
       scales:{x:{beginAtZero:true,max:100,grid:{color:'rgba(255,255,255,.04)'},ticks:{callback:v=>v+'%'}},y:{grid:{display:false}}}}
   }));
 
-  // Pipeline stacked — clean bars, total label on top, detail in table below
+  // Pipeline stacked — clean bars, total on top, detail in table
   const pipeNoDl = {display:false};
-  // Calculate running totals for top label on last dataset
   const pipeTotals = data.map(d=>d.transito);
-  chartInstances.push(new Chart(document.getElementById('rC5'), {
+  // Remove fixed canvas and create dynamic one
+  const pipeWrap = document.getElementById('rC5').parentElement;
+  pipeWrap.removeChild(document.getElementById('rC5'));
+  const pipeH = isLarge ? Math.max(n * 20, 200) : 200;
+  pipeWrap.style.height = pipeH + 'px';
+  const pipeCanvas = document.createElement('canvas');
+  pipeWrap.appendChild(pipeCanvas);
+
+  chartInstances.push(new Chart(pipeCanvas, {
     type:'bar', data:{labels:chartLabels,datasets:[
       {label:'En Entrega',data:data.map(d=>d.entrega),backgroundColor:'#067AB4',borderRadius:0,datalabels:pipeNoDl},
       {label:'En Preparación',data:data.map(d=>d.prep),backgroundColor:'#3AA5DC',borderRadius:0,datalabels:pipeNoDl},
       {label:'Solicitado',data:data.map(d=>d.solic),backgroundColor:'#FCB314',borderRadius:0,datalabels:pipeNoDl},
       {label:'Back Office',data:data.map(d=>d.backoff),backgroundColor:'#FF7200',borderRadius:0,datalabels:pipeNoDl},
       {label:'Entreg. s/v',data:data.map(d=>d.sinventa),backgroundColor:'rgba(239,68,68,.8)',borderRadius:{topLeft:3,topRight:3},
-        datalabels:{display:true,anchor:'end',align:'end',color:'#fff',font:{size:dlFontSize+1,weight:'bold'},
-          formatter:function(v,ctx){return pipeTotals[ctx.dataIndex]}}},
-    ]}, options:{responsive:true,maintainAspectRatio:false,
+        datalabels:{display:true,anchor:'end',align:'end',color:'#fff',font:{size:dlFs,weight:'bold'},
+          formatter:function(v,ctx){return pipeTotals[ctx.dataIndex]}}}
+    ]}, options:{indexAxis: isLarge ? 'y' : 'x', responsive:true,maintainAspectRatio:false,
       plugins:{legend:{position:'top',labels:{usePointStyle:true,pointStyle:'circle',padding:10,font:{size:8}}},
         tooltip:{callbacks:{afterBody:c=>'Total: '+data[c[0].dataIndex].transito}}},
-      scales:{x:{stacked:true,grid:{display:false}},y:{stacked:true,grid:{color:'rgba(255,255,255,.04)'}}}}
+      scales:{x:{stacked:true,grid:{display: isLarge ? true : false, color:'rgba(255,255,255,.04)'}},
+              y:{stacked:true,grid:{display: isLarge ? false : true, color:'rgba(255,255,255,.04)'}}}}
   }));
 }
 
@@ -1037,7 +1090,7 @@ if (INJECTED_DATA) {
       }
       Object.assign(ORG.agents, INJECTED_DATA.agents);
   }
-  
+
   // 2. Actualizar parámetros dinámicos de Python (Días y Periodo)
   if (INJECTED_DATA.diasRestantes !== undefined) {
       const diasInput = document.getElementById('diasRestantes');
@@ -1049,7 +1102,7 @@ if (INJECTED_DATA) {
   }
 
   console.log("Datos inyectados exitosamente por Streamlit");
-  
+
   // 3. Re-renderizar todo si hay un usuario logueado en la ventana
   if (currentUser && typeof buildInputTable === 'function') {
       buildInputTable();
