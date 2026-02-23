@@ -18,6 +18,8 @@ from pathlib import Path
 import streamlit.components.v1 as components
 import json
 
+from pandas.errors import DatabaseError as PandasDatabaseError
+
 from datetime import datetime
 import re
 import pyodbc
@@ -400,14 +402,25 @@ def _get_conn():
 
 @st.cache_data(ttl=600, show_spinner=False)
 def read_sql(query: str) -> pd.DataFrame:
+    conn = None
     try:
         conn = _get_conn()
         return pd.read_sql(query, conn)
-    except pyodbc.Error:
-        # if the connection died, rebuild once
-        st.cache_resource.clear()
-        conn = _get_conn()
-        return pd.read_sql(query, conn)
+
+    # ✅ pandas wraps DB/ODBC errors here sometimes
+    except (pyodbc.Error, PandasDatabaseError):
+        # rebuild connection once
+        try:
+            if conn is not None:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+        finally:
+            st.cache_resource.clear()
+
+        conn2 = _get_conn()
+        return pd.read_sql(query, conn2)
 
 # -------------------------------
 # POWER QUERY → PANDAS (Consulta2)
@@ -898,6 +911,7 @@ btn_cols = st.sidebar.columns([1, 1])
 with btn_cols[0]:
     if st.button("🔄 Actualizar datos", use_container_width=True):
         st.cache_data.clear()
+        st.cache_resource.clear()  # ✅ IMPORTANT: clears the cached pyodbc connection
         st.session_state["last_refresh"] = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
         st.rerun()
 with btn_cols[1]:
