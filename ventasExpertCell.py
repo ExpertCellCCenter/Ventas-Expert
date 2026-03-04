@@ -556,21 +556,150 @@ def add_empleado_join(ventas: pd.DataFrame, empleados: pd.DataFrame) -> pd.DataF
 # -------------------------------
 # METAS (MANUAL TABLE)
 # -------------------------------
+
+
+# -------------------------------
+# METAS (EXCEL MARZO)  ✅ only metas logic
+# -------------------------------
+def _metas_norm_txt(x: str) -> str:
+    x = str(x or "").strip().lower()
+    x = unicodedata.normalize("NFKD", x)
+    x = "".join(c for c in x if not unicodedata.combining(c))
+    x = x.replace("_", " ").replace("-", " ")
+    x = " ".join(x.split())
+    return x
+
+def _metas_pick_col(df: pd.DataFrame, candidates: list[str]) -> str | None:
+    norm_map = {_metas_norm_txt(c): c for c in df.columns}
+    # exact match
+    for cand in candidates:
+        k = _metas_norm_txt(cand)
+        if k in norm_map:
+            return norm_map[k]
+    # contains match
+    for cand in candidates:
+        k = _metas_norm_txt(cand)
+        for nk, real in norm_map.items():
+            if k and k in nk:
+                return real
+    return None
+
+def _metas_pick_meta_marzo_col(df: pd.DataFrame) -> str | None:
+    # Prefer explicit March column
+    col = _metas_pick_col(df, ["Meta Marzo", "META MARZO", "Meta_marzo", "meta marzo"])
+    if col:
+        return col
+    # Fallbacks (if someone exported differently)
+    col = _metas_pick_col(df, ["meta_mes_actual", "meta mes actual", "meta mes"])
+    if col:
+        return col
+    # Last resort: any column that contains both meta and marzo
+    for c in df.columns:
+        nc = _metas_norm_txt(c)
+        if ("meta" in nc) and ("marzo" in nc):
+            return c
+    return None
+
+def _metas_find_marzo_excel() -> Path:
+    base_dir = Path(__file__).resolve().parent if "__file__" in globals() else Path.cwd()
+    search_dirs = []
+    for d in [base_dir, Path.cwd()]:
+        if d not in search_dirs and d.exists():
+            search_dirs.append(d)
+
+    candidates: list[Path] = []
+    for d in search_dirs:
+        for f in d.iterdir():
+            if not f.is_file():
+                continue
+            if f.suffix.lower() not in (".xlsx", ".xls"):
+                continue
+            nm = _metas_norm_txt(f.name)
+            # must contain both "metas" and "marzo"
+            if "meta" in nm and "marzo" in nm:
+                candidates.append(f)
+
+    if not candidates:
+        raise FileNotFoundError(
+            f"No encontré un Excel de metas de MARZO en: {base_dir}\n"
+            f"Asegúrate de tener el archivo junto a app.py (por ejemplo: 'Metas marzo CC.xlsx')."
+        )
+
+    # Prefer the most specific name if multiple exist
+    def _rank(p: Path) -> tuple[int, int, int]:
+        nm = _metas_norm_txt(p.name)
+        # higher is better
+        score = 0
+        if "metas" in nm: score += 3
+        if "marzo" in nm: score += 3
+        if "cc" in nm: score += 2
+        if "2026" in nm: score += 1
+        return (score, -len(nm), 0)
+
+    candidates = sorted(candidates, key=_rank, reverse=True)
+    top = candidates[0]
+
+    # If there are multiple very similar, require cleanup to avoid ambiguity
+    top_norm = _metas_norm_txt(top.name)
+    ties = [c for c in candidates if _metas_norm_txt(c.name) == top_norm]
+    if len(ties) > 1:
+        raise FileNotFoundError(
+            "Encontré varios archivos de metas de marzo con el mismo nombre normalizado. "
+            "Deja solo uno o renómbralo a 'Metas marzo CC.xlsx':\n"
+            + "\n".join([t.name for t in ties])
+        )
+
+    return top
+
+@st.cache_data(ttl=600, show_spinner=False)
+def _load_metas_marzo_excel_df() -> pd.DataFrame:
+    """Loads March metas Excel and auto-selects the sheet that contains EJECUTIVO (e.g., 'Metas_Mes')."""
+    meta_path = _metas_find_marzo_excel()
+
+    xl = pd.ExcelFile(meta_path)
+    best_sheet = None
+
+    # Pick the sheet that has EJECUTIVO in headers
+    for sn in xl.sheet_names:
+        cols = list(pd.read_excel(meta_path, sheet_name=sn, nrows=0).columns)
+        if any(_metas_norm_txt(c) == "ejecutivo" for c in cols):
+            best_sheet = sn
+            break
+
+    # fallback: a sheet name that looks like metas_mes
+    if best_sheet is None:
+        for sn in xl.sheet_names:
+            snn = _metas_norm_txt(sn)
+            if "metas" in snn and "mes" in snn:
+                best_sheet = sn
+                break
+
+    if best_sheet is None:
+        best_sheet = xl.sheet_names[0]
+
+    df = pd.read_excel(meta_path, sheet_name=best_sheet)
+    df.columns = [str(c).strip() for c in df.columns]
+    return df
+
+
+# -------------------------------
+# METAS (MANUAL TABLE)
+# -------------------------------
 # ✅ EDIT METAS HERE (by hand)
 METAS_MANUAL_ROWS = [
     # --- Metas Centro ---
-    {"IDCenter": "CC1", "Nivel": "Centro", "Nombre": "EDUARDO AGUILA SANCHEZ", "Centro": "CC2", "Meta": 534},
-    {"IDCenter": "JV1", "Nivel": "Centro", "Nombre": "MARIA LUISA MEZA GOEL",  "Centro": "JV",  "Meta": 258},
+    {"IDCenter": "CC1", "Nivel": "Centro", "Nombre": "EDUARDO AGUILA SANCHEZ", "Centro": "CC2", "Meta": 600},
+    {"IDCenter": "JV1", "Nivel": "Centro", "Nombre": "MARIA LUISA MEZA GOEL",  "Centro": "JV",  "Meta": 300},
 
     # --- Metas Supervisor (JV) ---
-    {"IDCenter": "JV2", "Nivel": "Supervisor", "Nombre": "JORGE MIGUEL UREÑA ZARATE",        "Centro": "JV",  "Meta": 128},
-    {"IDCenter": "JV3", "Nivel": "Supervisor", "Nombre": "MARIA FERNANDA MARTINEZ BISTRAIN", "Centro": "JV",  "Meta": 130},
+    {"IDCenter": "JV2", "Nivel": "Supervisor", "Nombre": "JORGE MIGUEL UREÑA ZARATE",        "Centro": "JV",  "Meta": 157},
+    {"IDCenter": "JV3", "Nivel": "Supervisor", "Nombre": "MARIA FERNANDA MARTINEZ BISTRAIN", "Centro": "JV",  "Meta": 143},
 
     # --- Metas Supervisor (CC2) ---
-    {"IDCenter": "CC2", "Nivel": "Supervisor", "Nombre": "ALFREDO CABRERA PADRON",          "Centro": "CC2", "Meta": 133},
-    {"IDCenter": "CC4", "Nivel": "Supervisor", "Nombre": "REYNA LIZZETTE MARTINEZ GARCIA",  "Centro": "CC2", "Meta": 137},
-    {"IDCenter": "CC3", "Nivel": "Supervisor", "Nombre": "CARLOS ALBERTO AGUILAR CANO",  "Centro": "CC2", "Meta": 126},
-    {"IDCenter": "CC5", "Nivel": "Supervisor", "Nombre": "ALAN UZIEL SALAZAR AGUILAR",     "Centro": "CC2", "Meta": 138},
+    {"IDCenter": "CC2", "Nivel": "Supervisor", "Nombre": "ALFREDO CABRERA PADRON",          "Centro": "CC2", "Meta": 131},
+    {"IDCenter": "CC4", "Nivel": "Supervisor", "Nombre": "REYNA LIZZETTE MARTINEZ GARCIA",  "Centro": "CC2", "Meta": 161},
+    {"IDCenter": "CC3", "Nivel": "Supervisor", "Nombre": "CARLOS ALBERTO AGUILAR CANO",  "Centro": "CC2", "Meta": 149},
+    {"IDCenter": "CC5", "Nivel": "Supervisor", "Nombre": "ALAN UZIEL SALAZAR AGUILAR",     "Centro": "CC2", "Meta": 159},
 
     # ❌ JULIO is intentionally NOT included
 ]
@@ -578,16 +707,73 @@ METAS_MANUAL_ROWS = [
 
 def load_metas_df() -> pd.DataFrame:
     # No cache on purpose: edits to METAS_MANUAL_ROWS should reflect immediately.
-    df = pd.DataFrame(METAS_MANUAL_ROWS, columns=["IDCenter", "Nivel", "Nombre", "Centro", "Meta"])
-    if df.empty:
-        return pd.DataFrame(columns=["IDCenter", "Nivel", "Nombre", "Centro", "Meta", "Nombre_norm"])
+    # ✅ BUT: If March Excel exists, use it automatically for Centro/Supervisor metas (Tab 8).
+    try:
+        df_excel = _load_metas_marzo_excel_df()
+        if df_excel is None or df_excel.empty:
+            raise ValueError("Excel de metas vacío.")
 
-    df["Nombre"] = df["Nombre"].astype(str).str.strip()
-    df["Centro"] = df["Centro"].astype(str).str.strip().str.upper()
-    df["Nivel"] = df["Nivel"].astype(str).str.strip()
-    df["Meta"] = pd.to_numeric(df["Meta"], errors="coerce")
-    df["Nombre_norm"] = df["Nombre"].apply(normalize_name)
-    return df
+        col_ej = _metas_pick_col(df_excel, ["EJECUTIVO", "Ejecutivo"])
+        col_sup = _metas_pick_col(df_excel, ["Supervisor", "SUPERVISOR"])
+        col_cent = _metas_pick_col(df_excel, ["Centro", "CENTRO"])
+        col_meta = _metas_pick_meta_marzo_col(df_excel)
+
+        if not col_ej or not col_sup or not col_cent or not col_meta:
+            raise KeyError(
+                f"No pude detectar columnas requeridas. Columnas: {list(df_excel.columns)}"
+            )
+
+        tmp = df_excel.copy()
+        tmp[col_ej] = tmp[col_ej].astype(str).str.strip()
+        tmp[col_sup] = tmp[col_sup].astype(str).str.strip()
+        tmp[col_cent] = tmp[col_cent].astype(str).str.strip().str.upper()
+        tmp[col_meta] = pd.to_numeric(tmp[col_meta], errors="coerce").fillna(0)
+
+        # Coordinators (keep names from manual rows, but meta from Excel sum)
+        coord_map = {
+            str(r.get("Centro", "")).strip().upper(): (str(r.get("IDCenter", "")), str(r.get("Nombre", "")).strip())
+            for r in METAS_MANUAL_ROWS
+            if str(r.get("Nivel", "")).strip().lower() == "centro"
+        }
+
+        center_tot = tmp.groupby(col_cent, as_index=False)[col_meta].sum()
+
+        rows: list[dict] = []
+        for _, rr in center_tot.iterrows():
+            cent = str(rr[col_cent]).strip().upper()
+            meta_val = float(rr[col_meta] or 0)
+            idc, name = coord_map.get(cent, (f"{cent}_COORD", "COORDINADOR"))
+            rows.append({"IDCenter": idc, "Nivel": "Centro", "Nombre": name, "Centro": cent, "Meta": meta_val})
+
+        # Supervisor metas from Excel (sum of exec metas)
+        sup_tot = tmp.groupby([col_cent, col_sup], as_index=False)[col_meta].sum()
+        for i, rr in sup_tot.iterrows():
+            cent = str(rr[col_cent]).strip().upper()
+            sup = str(rr[col_sup]).strip()
+            rows.append({"IDCenter": f"{cent}_SUP{i+1}", "Nivel": "Supervisor", "Nombre": sup, "Centro": cent, "Meta": float(rr[col_meta] or 0)})
+
+        df = pd.DataFrame(rows, columns=["IDCenter", "Nivel", "Nombre", "Centro", "Meta"])
+        df["Nombre"] = df["Nombre"].astype(str).str.strip()
+        df["Centro"] = df["Centro"].astype(str).str.strip().str.upper()
+        df["Nivel"] = df["Nivel"].astype(str).str.strip()
+        df["Meta"] = pd.to_numeric(df["Meta"], errors="coerce")
+        df["Nombre_norm"] = df["Nombre"].apply(normalize_name)
+        return df
+
+    except Exception:
+        # Fallback to your manual table (original behavior)
+        df = pd.DataFrame(METAS_MANUAL_ROWS, columns=["IDCenter", "Nivel", "Nombre", "Centro", "Meta"])
+        if df.empty:
+            return pd.DataFrame(columns=["IDCenter", "Nivel", "Nombre", "Centro", "Meta", "Nombre_norm"])
+
+        df["Nombre"] = df["Nombre"].astype(str).str.strip()
+        df["Centro"] = df["Centro"].astype(str).str.strip().str.upper()
+        df["Nivel"] = df["Nivel"].astype(str).str.strip()
+        df["Meta"] = pd.to_numeric(df["Meta"], errors="coerce")
+        df["Nombre_norm"] = df["Nombre"].apply(normalize_name)
+        return df
+
+
 
 
 # -------------------------------
@@ -1037,63 +1223,55 @@ from pathlib import Path
 
 @st.cache_data(ttl=600, show_spinner=False)
 def load_metas_from_csv() -> dict:
-    """Loads metas from an Excel file located next to this script (robust search)."""
+    """Loads metas (MARZO) from the Excel next to this script. Returns {EJ_NORM: meta}."""
     try:
-        base_dir = Path(__file__).resolve().parent
-        target = "metas _febrero_cc.xlsx"
+        df = _load_metas_marzo_excel_df()
+        if df is None or df.empty:
+            return {}
 
-        # 1) Buscar match exacto (ideal)
-        meta_path = base_dir / target
+        col_ej = _metas_pick_col(df, ["EJECUTIVO", "Ejecutivo"])
+        col_meta = _metas_pick_meta_marzo_col(df)
 
-        # 2) Si no existe, buscar por nombre “parecido” (insensible a mayúsculas/espacios)
-        if not meta_path.exists():
-            files = list(base_dir.iterdir())
-
-            # match por nombre exacto pero case-insensitive y trim
-            for f in files:
-                if f.is_file() and f.name.strip().lower() == target.lower():
-                    meta_path = f
-                    break
-
-        # 3) Si aún no existe, buscar cualquier Excel que empiece con "metas_febrero"
-        if not meta_path.exists():
-            candidates = []
-            for f in base_dir.iterdir():
-                if f.is_file():
-                    nm = f.name.strip().lower()
-                    if nm.startswith("metas_febrero") and (nm.endswith(".xlsx") or nm.endswith(".xls")):
-                        candidates.append(f)
-
-            if len(candidates) == 1:
-                meta_path = candidates[0]
-            elif len(candidates) > 1:
-                raise FileNotFoundError(
-                    "Encontré varios candidatos en la carpeta. Renombra uno a 'metas_febrero_cc.xlsx' o deja solo uno:\n"
-                    + "\n".join([c.name for c in candidates])
-                )
-            else:
-                raise FileNotFoundError(
-                    f"No encontré el archivo en: {base_dir}\n"
-                    f"Archivos en carpeta:\n" + "\n".join([f.name for f in base_dir.iterdir() if f.is_file()])
-                )
-
-        # ---- Leer excel ----
-        df = pd.read_excel(meta_path)
-
-        # Validar columnas esperadas
-        if "EJECUTIVO" not in df.columns:
+        if not col_ej:
             raise KeyError(f"Falta columna 'EJECUTIVO'. Columnas: {list(df.columns)}")
+        if not col_meta:
+            raise KeyError(f"No encontré la columna de meta de MARZO. Columnas: {list(df.columns)}")
 
-        # Ajusta este nombre si tu columna se llama diferente
-        col_meta = "Meta Febrero"
-        if col_meta not in df.columns:
-            raise KeyError(f"Falta columna '{col_meta}'. Columnas: {list(df.columns)}")
+        tmp = df.copy()
+        tmp[col_ej] = tmp[col_ej].astype(str).str.strip()
+        tmp["EJ_NORM"] = tmp[col_ej].apply(normalize_name)
 
-        df["EJ_NORM"] = df["EJECUTIVO"].astype(str).apply(normalize_name)
-        return df.set_index("EJ_NORM")[col_meta].to_dict()
+        tmp[col_meta] = pd.to_numeric(tmp[col_meta], errors="coerce").fillna(0)
+
+        return tmp.set_index("EJ_NORM")[col_meta].to_dict()
 
     except Exception as e:
-        st.warning(f"No se pudo cargar el archivo de metas: {e}")
+        st.warning(f"No se pudo cargar el archivo de metas MARZO: {e}")
+        return {}
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def load_metas_supervisor_from_excel() -> dict:
+    """Loads supervisor metas (MARZO) from the same Excel. Returns {SUP_NORM: meta_sum}."""
+    try:
+        df = _load_metas_marzo_excel_df()
+        if df is None or df.empty:
+            return {}
+
+        col_sup = _metas_pick_col(df, ["Supervisor", "SUPERVISOR"])
+        col_meta = _metas_pick_meta_marzo_col(df)
+
+        if not col_sup or not col_meta:
+            return {}
+
+        tmp = df.copy()
+        tmp[col_sup] = tmp[col_sup].astype(str).str.strip()
+        tmp[col_meta] = pd.to_numeric(tmp[col_meta], errors="coerce").fillna(0)
+
+        tmp["SUP_NORM"] = tmp[col_sup].apply(normalize_name)
+        return tmp.groupby("SUP_NORM")[col_meta].sum().to_dict()
+
+    except Exception:
         return {}
     
 # =========================================================
@@ -1166,55 +1344,6 @@ def fetch_programacion_history(end_date: date) -> pd.DataFrame:
 
 
 
-@st.cache_data(ttl=600, show_spinner=False)
-def load_metas_supervisor_from_excel() -> dict:
-    """
-    Tries to load supervisor metas from the SAME excel next to this script.
-    If the columns don't exist, returns {}.
-    """
-    try:
-        base_dir = Path(__file__).resolve().parent
-        target = "metas _febrero_cc.xlsx"
-
-        meta_path = base_dir / target
-        if not meta_path.exists():
-            for f in base_dir.iterdir():
-                if f.is_file() and f.name.strip().lower() == target.lower():
-                    meta_path = f
-                    break
-
-        if not meta_path.exists():
-            return {}
-
-        df = pd.read_excel(meta_path)
-
-        def _pick(df_, candidates):
-            norm = {str(c).strip().lower(): c for c in df_.columns}
-            for cand in candidates:
-                key = cand.strip().lower()
-                if key in norm:
-                    return norm[key]
-            for cand in candidates:
-                key = cand.strip().lower()
-                for nk, real in norm.items():
-                    if key in nk:
-                        return real
-            return None
-
-        col_sup = _pick(df, ["SUPERVISOR", "Supervisor"])
-        col_meta = _pick(df, ["Meta Supervisor", "META SUPERVISOR", "META_SUPERVISOR", "MetaSup"])
-
-        if not col_sup or not col_meta:
-            return {}
-
-        df[col_sup] = df[col_sup].astype(str).str.strip()
-        df[col_meta] = pd.to_numeric(df[col_meta], errors="coerce").fillna(0)
-
-        df["SUP_NORM"] = df[col_sup].apply(normalize_name)
-        return df.groupby("SUP_NORM")[col_meta].sum().to_dict()
-
-    except Exception:
-        return {}
 
 
 # -------------------------------
@@ -3325,8 +3454,12 @@ with tabs[7]:
         "JV",
         "CC2",
     )
+    
     emp_sup["Supervisor"] = emp_sup["Nombre"]
     emp_sup["Supervisor_norm"] = emp_sup["Supervisor"].apply(normalize_name)
+
+    _YARELI_NORM = normalize_name("YARELI SILVA ZEFERINO")
+    emp_sup = emp_sup[emp_sup["Supervisor_norm"] != _YARELI_NORM].copy()
 
     # ❌ Hide any "JULIO ..."
     emp_sup["FirstName"] = emp_sup["Supervisor_norm"].astype(str).str.split().str[0]
@@ -4191,7 +4324,28 @@ with tabs[9]:
         normalize_name("JORGE MIGUEL UREÑA ZARATE"): "jorge",
         normalize_name("MARIA FERNANDA MARTINEZ BISTRAIN"): "maria"
     }
-    
+
+    # 4) ✅ metas maps for HTML (Marzo)
+    metas_map_html = load_metas_from_csv()                  # EJ_NORM -> Meta Marzo
+    metas_sup_map_html = load_metas_supervisor_from_excel() # SUP_NORM -> Meta Supervisor Marzo (sum)
+
+    # 5) Initialize the JSON payload structure (NOW it exists)
+    live_data_payload = {
+        "diasRestantes": dias_restantes_int,
+        "periodo": current_period,
+        "supData": {k: {"ventas":0, "backFeb":0, "entrega":0, "prep":0, "solic":0, "backoff":0, "sinventa":0} for k in sup_map.values()},
+        "agents": {k: [] for k in sup_map.values()},
+        "supMetas": {}  # ✅ include here
+    }
+
+    # ✅ send supervisor metas to HTML (coord/mgr views use ORG.supervisors[*].meta)
+    for sup_norm, sup_id in sup_map.items():
+        mv = metas_sup_map_html.get(sup_norm, 0)
+        try:
+            live_data_payload["supMetas"][sup_id] = int(float(mv)) if pd.notna(mv) else 0
+        except Exception:
+            live_data_payload["supMetas"][sup_id] = 0
+
     # 4. Initialize the JSON payload structure
     live_data_payload = {
         "diasRestantes": dias_restantes_int,
@@ -4199,6 +4353,19 @@ with tabs[9]:
         "supData": {k: {"ventas":0, "backFeb":0, "entrega":0, "prep":0, "solic":0, "backoff":0, "sinventa":0} for k in sup_map.values()},
         "agents": {k: [] for k in sup_map.values()}
     }
+
+    # ✅ metas maps for HTML (Marzo)
+    metas_map_html = load_metas_from_csv()                  # EJ_NORM -> Meta Marzo
+    metas_sup_map_html = load_metas_supervisor_from_excel() # SUP_NORM -> Meta Supervisor Marzo (sum)
+
+    # ✅ send supervisor metas to HTML (coord/mgr views use ORG.supervisors[*].meta)
+    live_data_payload["supMetas"] = {}
+    for sup_norm, sup_id in sup_map.items():
+        mv = metas_sup_map_html.get(sup_norm, 0)
+        try:
+            live_data_payload["supMetas"][sup_id] = int(float(mv)) if pd.notna(mv) else 0
+        except Exception:
+            live_data_payload["supMetas"][sup_id] = 0
     
     # 5. Extract data automatically
     if 'df_detalle_full' in locals() and not df_detalle_full.empty:
@@ -4216,7 +4383,11 @@ with tabs[9]:
                 sup_id = sup_map[sup_norm]
                 
                 # A. Get Metas (from Tab 5)
-                meta_val = int(row.get("Meta", 20))
+                _mv = metas_map_html.get(ej_norm, row.get("Meta", 0))
+                try:
+                    meta_val = int(float(_mv)) if pd.notna(_mv) else 0
+                except Exception:
+                    meta_val = 0
                 
                 # B. ✅ PULL TRUE VENTAS DIRECTLY FROM METAS LOGIC (df_base)
                 v_ventas = int(ventas_reales_dict.get(ej_norm, 0))
@@ -4280,3 +4451,4 @@ with tabs[9]:
 
     except FileNotFoundError:
         st.error("No se encontró el archivo 'dashboard.html'. Asegúrate de que esté en la misma carpeta.")
+
