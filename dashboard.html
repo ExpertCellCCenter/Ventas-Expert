@@ -1077,6 +1077,16 @@ if (INJECTED_DATA) {
   if (INJECTED_DATA.supData) {
       Object.assign(ORG.supData, INJECTED_DATA.supData);
   }
+
+    // ✅ Update supervisor metas (for coord/mgr views)
+  if (INJECTED_DATA.supMetas) {
+    for (const [supId, meta] of Object.entries(INJECTED_DATA.supMetas)) {
+      if (ORG.supervisors[supId]) {
+        ORG.supervisors[supId].meta = parseInt(meta) || 0;
+      }
+    }
+  }
+  
   if (INJECTED_DATA.agents) {
       // Permitir que la info de Back Feb que se edite a mano se mantenga si Streamlit manda 0
       for (const [supId, agents] of Object.entries(INJECTED_DATA.agents)) {
