@@ -1124,27 +1124,7 @@ with st.spinner("Cargando datos desde SQL Server…"):
     ventas = add_empleado_join(ventas_raw, empleados)
     metas = load_metas_df()
 
-# ==============================================================
-# ✅ CUSTOM RULE: Move Ronaldo to Alfredo's team ONLY for Feb 2026
-# ==============================================================
-if not ventas.empty:
-    # 1. Target Ronaldo's sales in Feb 2026
-    mask_ronaldo_ventas = (
-        (ventas["EJECUTIVO_norm"] == normalize_name("RONALDO SANCHEZ CORDOVA")) & 
-        (ventas["AñoMes"] == 202602)
-    )
-    
-    # 2. Reassign his sales to Alfredo's team
-    ventas.loc[mask_ronaldo_ventas, "Supervisor"] = "ALFREDO CABRERA PADRON"
-    ventas.loc[mask_ronaldo_ventas, "Supervisor_norm"] = normalize_name("ALFREDO CABRERA PADRON")
 
-if not empleados.empty:
-    # 3. Target Ronaldo in the general Employee roster
-    mask_ronaldo_emp = (
-        empleados["Nombre"].apply(normalize_name) == normalize_name("RONALDO SANCHEZ CORDOVA")
-    )
-    # Move him so he shows up under Alfredo in the HTML Dropdowns/Tables
-    empleados.loc[mask_ronaldo_emp, "Jefe Inmediato"] = "ALFREDO CABRERA PADRON"
 # ==============================================================
 
 # ✅ ONLY FOR FILTER OPTIONS (do NOT change data logic):
