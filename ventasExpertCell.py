@@ -2735,7 +2735,9 @@ with tabs[4]:
         ej_name = str(r["EJECUTIVO"]).strip()
         ej_norm = normalize_name(ej_name)
 
-        ventas_reales = int(activadas_map.get(ej_norm, 0) or 0)
+        # ✅ TRUE sales for the month (from reporte_ventas_no_conciliadas via df_base/stats)
+        ventas_reales = int(r.get("Ventas", 0) or 0)
+
         monto = float(r["MontoVendido"])
         arpu_val = (monto / ventas_reales) if ventas_reales > 0 else 0.0
 
