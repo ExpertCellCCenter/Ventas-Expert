@@ -35,6 +35,11 @@ st.set_page_config(
 )
 
 # -------------------------------
+# GLOBAL CONSTANTS
+# -------------------------------
+EXCLUDED_VENDOR = "ABASTECEDORA Y SUMINISTROS ORTEGA/ISABEL VALDEZ JIMENEZ"
+
+# -------------------------------
 # THEME (READ ONLY — we do NOT force anything)
 # -------------------------------
 try:
@@ -554,13 +559,30 @@ def add_empleado_join(ventas: pd.DataFrame, empleados: pd.DataFrame) -> pd.DataF
 
 
 # -------------------------------
-# METAS (MANUAL TABLE)
+# METAS (EXCEL POR MES) ✅ generic monthly metas logic
 # -------------------------------
+MESES_ES = {
+    1: "enero",
+    2: "febrero",
+    3: "marzo",
+    4: "abril",
+    5: "mayo",
+    6: "junio",
+    7: "julio",
+    8: "agosto",
+    9: "septiembre",
+    10: "octubre",
+    11: "noviembre",
+    12: "diciembre",
+}
 
+def month_name_es_only(ym_int: int) -> str:
+    try:
+        m = int(ym_int) % 100
+        return MESES_ES.get(m, "")
+    except Exception:
+        return ""
 
-# -------------------------------
-# METAS (EXCEL MARZO)  ✅ only metas logic
-# -------------------------------
 def _metas_norm_txt(x: str) -> str:
     x = str(x or "").strip().lower()
     x = unicodedata.normalize("NFKD", x)
@@ -571,43 +593,70 @@ def _metas_norm_txt(x: str) -> str:
 
 def _metas_pick_col(df: pd.DataFrame, candidates: list[str]) -> str | None:
     norm_map = {_metas_norm_txt(c): c for c in df.columns}
+
     # exact match
     for cand in candidates:
         k = _metas_norm_txt(cand)
         if k in norm_map:
             return norm_map[k]
+
     # contains match
     for cand in candidates:
         k = _metas_norm_txt(cand)
         for nk, real in norm_map.items():
             if k and k in nk:
                 return real
+
     return None
 
-def _metas_pick_meta_marzo_col(df: pd.DataFrame) -> str | None:
-    # Prefer explicit March column
-    col = _metas_pick_col(df, ["Meta Marzo", "META MARZO", "Meta_marzo", "meta marzo"])
+def _metas_pick_meta_month_col(df: pd.DataFrame, ym_int: int) -> str | None:
+    mes = month_name_es_only(ym_int)
+    if not mes:
+        return None
+
+    # Prefer explicit month column
+    col = _metas_pick_col(
+        df,
+        [
+            f"Meta {mes}",
+            f"META {mes.upper()}",
+            f"Meta_{mes}",
+            f"meta {mes}",
+            f"meta_{mes}",
+        ],
+    )
     if col:
         return col
-    # Fallbacks (if someone exported differently)
+
+    # Fallbacks if the workbook uses a generic "current month" style column
     col = _metas_pick_col(df, ["meta_mes_actual", "meta mes actual", "meta mes"])
     if col:
         return col
-    # Last resort: any column that contains both meta and marzo
+
+    # Last resort: any column containing both "meta" and current month name
     for c in df.columns:
         nc = _metas_norm_txt(c)
-        if ("meta" in nc) and ("marzo" in nc):
+        if ("meta" in nc) and (mes in nc):
             return c
+
+    # Ultimate fallback: single generic meta column
+    generic = _metas_pick_col(df, ["Meta", "META", "meta"])
+    if generic:
+        return generic
+
     return None
 
-def _metas_find_marzo_excel() -> Path:
+def _metas_find_month_excel(ym_int: int) -> Path:
     base_dir = Path(__file__).resolve().parent if "__file__" in globals() else Path.cwd()
     search_dirs = []
     for d in [base_dir, Path.cwd()]:
         if d not in search_dirs and d.exists():
             search_dirs.append(d)
 
-    candidates: list[Path] = []
+    mes = month_name_es_only(ym_int)
+    year = int(ym_int) // 100
+
+    all_meta_files: list[Path] = []
     for d in search_dirs:
         for f in d.iterdir():
             if not f.is_file():
@@ -615,46 +664,42 @@ def _metas_find_marzo_excel() -> Path:
             if f.suffix.lower() not in (".xlsx", ".xls"):
                 continue
             nm = _metas_norm_txt(f.name)
-            # must contain both "metas" and "marzo"
-            if "meta" in nm and "marzo" in nm:
-                candidates.append(f)
+            if "meta" in nm:
+                all_meta_files.append(f)
 
-    if not candidates:
+    if not all_meta_files:
         raise FileNotFoundError(
-            f"No encontré un Excel de metas de MARZO en: {base_dir}\n"
-            f"Asegúrate de tener el archivo junto a app.py (por ejemplo: 'Metas marzo CC.xlsx')."
+            f"No encontré archivos Excel de metas en: {base_dir}\n"
+            f"Coloca el archivo junto a app.py."
         )
 
-    # Prefer the most specific name if multiple exist
-    def _rank(p: Path) -> tuple[int, int, int]:
+    # Prefer files containing the selected month in the filename
+    month_specific = [f for f in all_meta_files if mes and mes in _metas_norm_txt(f.name)]
+    candidates = month_specific if month_specific else all_meta_files
+
+    def _rank(p: Path) -> tuple[int, int, str]:
         nm = _metas_norm_txt(p.name)
-        # higher is better
         score = 0
-        if "metas" in nm: score += 3
-        if "marzo" in nm: score += 3
-        if "cc" in nm: score += 2
-        if "2026" in nm: score += 1
-        return (score, -len(nm), 0)
+        if "metas" in nm:
+            score += 3
+        if mes and mes in nm:
+            score += 5
+        if str(year) in nm:
+            score += 1
+        if "cc" in nm:
+            score += 2
+        return (score, -len(nm), p.name.lower())
 
     candidates = sorted(candidates, key=_rank, reverse=True)
-    top = candidates[0]
-
-    # If there are multiple very similar, require cleanup to avoid ambiguity
-    top_norm = _metas_norm_txt(top.name)
-    ties = [c for c in candidates if _metas_norm_txt(c.name) == top_norm]
-    if len(ties) > 1:
-        raise FileNotFoundError(
-            "Encontré varios archivos de metas de marzo con el mismo nombre normalizado. "
-            "Deja solo uno o renómbralo a 'Metas marzo CC.xlsx':\n"
-            + "\n".join([t.name for t in ties])
-        )
-
-    return top
+    return candidates[0]
 
 @st.cache_data(ttl=600, show_spinner=False)
-def _load_metas_marzo_excel_df() -> pd.DataFrame:
-    """Loads March metas Excel and auto-selects the sheet that contains EJECUTIVO (e.g., 'Metas_Mes')."""
-    meta_path = _metas_find_marzo_excel()
+def _load_metas_excel_df(ym_int: int) -> pd.DataFrame:
+    """
+    Loads metas Excel for the selected month and auto-selects the sheet
+    that contains EJECUTIVO.
+    """
+    meta_path = _metas_find_month_excel(ym_int)
 
     xl = pd.ExcelFile(meta_path)
     best_sheet = None
@@ -705,18 +750,17 @@ METAS_MANUAL_ROWS = [
 ]
 
 
-def load_metas_df() -> pd.DataFrame:
-    # No cache on purpose: edits to METAS_MANUAL_ROWS should reflect immediately.
-    # ✅ BUT: If March Excel exists, use it automatically for Centro/Supervisor metas (Tab 8).
+def load_metas_df(ym_int: int) -> pd.DataFrame:
+    # ✅ If monthly Excel exists, use it automatically for Centro/Supervisor metas (Tab 8)
     try:
-        df_excel = _load_metas_marzo_excel_df()
+        df_excel = _load_metas_excel_df(ym_int)
         if df_excel is None or df_excel.empty:
             raise ValueError("Excel de metas vacío.")
 
         col_ej = _metas_pick_col(df_excel, ["EJECUTIVO", "Ejecutivo"])
         col_sup = _metas_pick_col(df_excel, ["Supervisor", "SUPERVISOR"])
         col_cent = _metas_pick_col(df_excel, ["Centro", "CENTRO"])
-        col_meta = _metas_pick_meta_marzo_col(df_excel)
+        col_meta = _metas_pick_meta_month_col(df_excel, ym_int)
 
         if not col_ej or not col_sup or not col_cent or not col_meta:
             raise KeyError(
@@ -743,14 +787,30 @@ def load_metas_df() -> pd.DataFrame:
             cent = str(rr[col_cent]).strip().upper()
             meta_val = float(rr[col_meta] or 0)
             idc, name = coord_map.get(cent, (f"{cent}_COORD", "COORDINADOR"))
-            rows.append({"IDCenter": idc, "Nivel": "Centro", "Nombre": name, "Centro": cent, "Meta": meta_val})
+            rows.append(
+                {
+                    "IDCenter": idc,
+                    "Nivel": "Centro",
+                    "Nombre": name,
+                    "Centro": cent,
+                    "Meta": meta_val,
+                }
+            )
 
         # Supervisor metas from Excel (sum of exec metas)
         sup_tot = tmp.groupby([col_cent, col_sup], as_index=False)[col_meta].sum()
         for i, rr in sup_tot.iterrows():
             cent = str(rr[col_cent]).strip().upper()
             sup = str(rr[col_sup]).strip()
-            rows.append({"IDCenter": f"{cent}_SUP{i+1}", "Nivel": "Supervisor", "Nombre": sup, "Centro": cent, "Meta": float(rr[col_meta] or 0)})
+            rows.append(
+                {
+                    "IDCenter": f"{cent}_SUP{i+1}",
+                    "Nivel": "Supervisor",
+                    "Nombre": sup,
+                    "Centro": cent,
+                    "Meta": float(rr[col_meta] or 0),
+                }
+            )
 
         df = pd.DataFrame(rows, columns=["IDCenter", "Nivel", "Nombre", "Centro", "Meta"])
         df["Nombre"] = df["Nombre"].astype(str).str.strip()
@@ -761,7 +821,7 @@ def load_metas_df() -> pd.DataFrame:
         return df
 
     except Exception:
-        # Fallback to your manual table (original behavior)
+        # Fallback to your manual table
         df = pd.DataFrame(METAS_MANUAL_ROWS, columns=["IDCenter", "Nivel", "Nombre", "Centro", "Meta"])
         if df.empty:
             return pd.DataFrame(columns=["IDCenter", "Nivel", "Nombre", "Centro", "Meta", "Nombre_norm"])
@@ -772,7 +832,6 @@ def load_metas_df() -> pd.DataFrame:
         df["Meta"] = pd.to_numeric(df["Meta"], errors="coerce")
         df["Nombre_norm"] = df["Nombre"].apply(normalize_name)
         return df
-
 
 
 
@@ -1122,7 +1181,6 @@ with st.spinner("Cargando datos desde SQL Server…"):
     empleados = load_empleados()
     ventas_raw = load_ventas(start_yyyymmdd, end_yyyymmdd)
     ventas = add_empleado_join(ventas_raw, empleados)
-    metas = load_metas_df()
 
 
 # ==============================================================
@@ -1157,6 +1215,7 @@ mes_sel = st.sidebar.selectbox(
     format_func=lambda ym: mes_labels.get(ym, str(ym)),
     index=len(meses_disponibles) - 1,
 )
+metas = load_metas_df(int(mes_sel))
 
 center_keys = ["CC2", "JV"]
 center_sel = st.sidebar.multiselect("Centro (CC2 / JV)", options=center_keys, default=center_keys)
@@ -1202,44 +1261,43 @@ if sub_sel:
 from pathlib import Path
 
 @st.cache_data(ttl=600, show_spinner=False)
-def load_metas_from_csv() -> dict:
-    """Loads metas (MARZO) from the Excel next to this script. Returns {EJ_NORM: meta}."""
+def load_metas_from_csv(ym_int: int) -> dict:
+    """Loads executive metas from the Excel of the selected month. Returns {EJ_NORM: meta}."""
     try:
-        df = _load_metas_marzo_excel_df()
+        df = _load_metas_excel_df(ym_int)
         if df is None or df.empty:
             return {}
 
         col_ej = _metas_pick_col(df, ["EJECUTIVO", "Ejecutivo"])
-        col_meta = _metas_pick_meta_marzo_col(df)
+        col_meta = _metas_pick_meta_month_col(df, ym_int)
 
         if not col_ej:
             raise KeyError(f"Falta columna 'EJECUTIVO'. Columnas: {list(df.columns)}")
         if not col_meta:
-            raise KeyError(f"No encontré la columna de meta de MARZO. Columnas: {list(df.columns)}")
+            raise KeyError(f"No encontré la columna de meta del mes seleccionado. Columnas: {list(df.columns)}")
 
         tmp = df.copy()
         tmp[col_ej] = tmp[col_ej].astype(str).str.strip()
         tmp["EJ_NORM"] = tmp[col_ej].apply(normalize_name)
-
         tmp[col_meta] = pd.to_numeric(tmp[col_meta], errors="coerce").fillna(0)
 
-        return tmp.set_index("EJ_NORM")[col_meta].to_dict()
+        return tmp.groupby("EJ_NORM")[col_meta].sum().to_dict()
 
     except Exception as e:
-        st.warning(f"No se pudo cargar el archivo de metas MARZO: {e}")
+        st.warning(f"No se pudo cargar el archivo de metas del mes seleccionado: {e}")
         return {}
 
 
 @st.cache_data(ttl=600, show_spinner=False)
-def load_metas_supervisor_from_excel() -> dict:
-    """Loads supervisor metas (MARZO) from the same Excel. Returns {SUP_NORM: meta_sum}."""
+def load_metas_supervisor_from_excel(ym_int: int) -> dict:
+    """Loads supervisor metas from the Excel of the selected month. Returns {SUP_NORM: meta_sum}."""
     try:
-        df = _load_metas_marzo_excel_df()
+        df = _load_metas_excel_df(ym_int)
         if df is None or df.empty:
             return {}
 
         col_sup = _metas_pick_col(df, ["Supervisor", "SUPERVISOR"])
-        col_meta = _metas_pick_meta_marzo_col(df)
+        col_meta = _metas_pick_meta_month_col(df, ym_int)
 
         if not col_sup or not col_meta:
             return {}
@@ -1288,42 +1346,118 @@ def parse_backoffice_datetime(series: pd.Series, window_start: date | None = Non
     out = out.where(~(dt_dayfirst.isna() & dt_monthfirst.notna()), dt_monthfirst)
     return out
 
+def choose_backoffice_dt_html(df: pd.DataFrame, window_start: date, window_end: date) -> pd.Series:
+    # Same logic as Transito Global 2.0
+    if "BO_DT_DF" in df.columns and "BO_DT_MF" in df.columns:
+        dt_dayfirst = df["BO_DT_DF"]
+        dt_monthfirst = df["BO_DT_MF"]
+
+        w0 = pd.Timestamp(window_start)
+        w1 = pd.Timestamp(window_end) + pd.Timedelta(days=1) - pd.Timedelta(microseconds=1)
+
+        in1 = dt_dayfirst.between(w0, w1)
+        in2 = dt_monthfirst.between(w0, w1)
+
+        out = dt_dayfirst.copy()
+        out = out.where(~(in2 & ~in1), dt_monthfirst)
+        out = out.where(~(dt_dayfirst.isna() & dt_monthfirst.notna()), dt_monthfirst)
+        return out
+
+    # fallback
+    return parse_backoffice_datetime(df["Back Office"], window_start=window_start, window_end=window_end)
+
 # =========================================================
 # ✅ SINGLE CACHED FETCH FOR ALL TRANSITO & HTML DATA
 # =========================================================
 @st.cache_data(ttl=600, show_spinner=False)
 def fetch_programacion_history(end_date: date) -> pd.DataFrame:
-    """Pulls from Nov 2025 to end_date ONCE and caches it in memory."""
+    """
+    Trae la misma base necesaria para Interfaz Custom,
+    pero con la misma limpieza y parsing usada en Transito Global 2.0
+    para que Back Office cuadre 1:1.
+    """
     fi_str = "20251101"
     ff_str = end_date.strftime("%Y%m%d")
+
     q = f"""
-    SELECT 
-        LTRIM(RTRIM([Vendedor])) AS EJECUTIVO,
-        LTRIM(RTRIM([Estatus])) AS Estatus,
+    SELECT
+        LTRIM(RTRIM([Vendedor]))        AS EJECUTIVO,
+        LTRIM(RTRIM([Estatus]))         AS Estatus,
         [Venta],
         [Back Office],
-        [Fecha creacion]
+        [Fecha creacion],
+        [Tienda solicita]               AS Centro
     FROM reporte_programacion_entrega('empresa_maestra', 4, '{fi_str}', '{ff_str}')
-    WHERE [Tienda solicita] LIKE 'EXP ATT C CENTER%'
+    WHERE
+        [Tienda solicita] LIKE 'EXP ATT C CENTER%'
+        AND [Estatus] IN ('En entrega','Canc Error','Entregado','En preparacion','Back Office','Solicitado')
     """
+
     try:
         df = read_sql(q)
-        if not df.empty:
-            df["EJ_NORM"] = df["EJECUTIVO"].astype(str).apply(normalize_name)
-            df["EJ_NORM"] = df["EJ_NORM"].replace({
-                normalize_name("CESAR JAHACIEL ALONSO GARCIAA"): normalize_name("CESAR JAHACIEL ALONSO GARCIA"),
-                normalize_name("VICTOR BETANZO FUENTES"): normalize_name("VICTOR BETANZOS FUENTES"),
-            })
-            df["Estatus_upper"] = df["Estatus"].astype(str).str.strip().str.upper()
-            df["Venta_Vacia"] = df["Venta"].isna() | (df["Venta"].astype(str).str.strip() == "")
-            df["Fecha_Creacion_DT"] = pd.to_datetime(df["Fecha creacion"], errors="coerce", dayfirst=True).dt.date
+
+        if df.empty:
+            return df
+
+        # -------------------------
+        # Limpieza exacta estilo Tránsito
+        # -------------------------
+        for col in ["EJECUTIVO", "Estatus", "Back Office", "Centro"]:
+            if col in df.columns:
+                df[col] = df[col].astype(str).str.strip()
+                df[col] = df[col].replace({"nan": np.nan, "None": np.nan})
+
+        if "Venta" in df.columns:
+            df["Venta"] = df["Venta"].replace({"nan": np.nan, "None": np.nan})
+
+        # ✅ misma exclusión que Transito
+        if "EJECUTIVO" in df.columns:
+            df = df[df["EJECUTIVO"].str.upper() != EXCLUDED_VENDOR].copy()
+
+        # ✅ mismas correcciones de nombre que ventas
+        df["EJECUTIVO"] = df["EJECUTIVO"].replace(
+            {
+                "CESAR JAHACIEL ALONSO GARCIAA": "CESAR JAHACIEL ALONSO GARCIA",
+                "VICTOR BETANZO FUENTES": "VICTOR BETANZOS FUENTES",
+            }
+        )
+
+        df["EJ_NORM"] = df["EJECUTIVO"].astype(str).apply(normalize_name)
+        df["Estatus_upper"] = df["Estatus"].astype(str).str.strip().str.upper()
+        df["Venta_Vacia"] = df["Venta"].isna() | (df["Venta"].astype(str).str.strip() == "")
+        df["Fecha_Creacion_DT"] = pd.to_datetime(df["Fecha creacion"], errors="coerce", dayfirst=True).dt.date
+
+        # CentroKey igual que en ventas
+        df["CentroKey"] = np.where(
+            df["Centro"].astype(str).str.upper().str.contains("JUAREZ", na=False),
+            "JV",
+            "CC2",
+        )
+
+        # -------------------------
+        # Pre-parse exacto Back Office
+        # (igual filosofía que Transito Global 2.0)
+        # -------------------------
+        s = df["Back Office"].astype(str).str.strip()
+        s = s.replace({"nan": "", "None": "", "NaT": ""})
+        s = s.where(s != "", np.nan)
+
+        if s.notna().any():
+            pat = r"(\d{1,2}[/-]\d{1,2}[/-]\d{2,4}\s+\d{1,2}:\d{2}(?::\d{2})?)|(\d{4}[/-]\d{1,2}[/-]\d{1,2}\s+\d{1,2}:\d{2}(?::\d{2})?)"
+            ext = s.astype(str).str.extract(pat)
+            ext = ext[0].fillna(ext[1])
+            s2 = ext.where(ext.notna(), s)
+        else:
+            s2 = s
+
+        df["BO_DT_DF"] = pd.to_datetime(s2, errors="coerce", dayfirst=True)
+        df["BO_DT_MF"] = pd.to_datetime(s2, errors="coerce", dayfirst=False)
+
         return df
+
     except Exception as e:
         print(f"Error loading history: {e}")
         return pd.DataFrame()
-
-
-
 
 
 # -------------------------------
@@ -2571,7 +2705,7 @@ with tabs[4]:
     # ------------------------------------------------
     # 1) External data (Metas & Tránsito)
     # ------------------------------------------------
-    metas_map = load_metas_from_csv()
+    metas_map = load_metas_from_csv(int(mes_sel))
 
     # Query tránsito only for the selected month window
     m_start, m_end = month_bounds(int(mes_sel))
@@ -2597,7 +2731,7 @@ with tabs[4]:
         if not df_month[activadas_mask].empty:
             activadas_map = df_month[activadas_mask].groupby("EJ_NORM").size().to_dict()
 
-    metas_sup_map = load_metas_supervisor_from_excel()
+    metas_sup_map = load_metas_supervisor_from_excel(int(mes_sel))
 
     # ------------------------------------------------
     # 2) Working days (Sanity logic)
@@ -4241,61 +4375,54 @@ with tabs[9]:
         mask_pipeline = (df_html["Fecha_Creacion_DT"] >= start_dt) & (df_html["Fecha_Creacion_DT"] <= end_dt)
         df_pipeline = df_html[mask_pipeline].copy()
         
-        def get_html_cat(row):
-            e = row["Estatus_upper"]
-            v_vacia = row["Venta_Vacia"]
-            if e == "EN ENTREGA": return "entrega"
-            if e in ["EN PREPARACION", "EN PREPARACIÓN"]: return "prep"
-            if e == "SOLICITADO": return "solic"
-            if e in ["BACK OFFICE", "BACKOFFICE"]: return "backoff"
-            if e == "ENTREGADO" and v_vacia: return "sinventa"
-            return None
-            
-        E = df_pipeline["Estatus_upper"]
-        V = df_pipeline["Venta_Vacia"]
-
         condlist = [
-            E.eq("EN ENTREGA"),
-            E.isin(["EN PREPARACION", "EN PREPARACIÓN"]),
-            E.eq("SOLICITADO"),
-            E.isin(["BACK OFFICE", "BACKOFFICE"]),
-            E.eq("ENTREGADO") & V,
+            df_pipeline["Estatus_upper"].eq("EN ENTREGA"),
+            df_pipeline["Estatus_upper"].isin(["EN PREPARACION", "EN PREPARACIÓN"]),
+            df_pipeline["Estatus_upper"].eq("SOLICITADO"),
+            df_pipeline["Estatus_upper"].isin(["BACK OFFICE", "BACKOFFICE"]),
+            (df_pipeline["Estatus_upper"] == "ENTREGADO") & df_pipeline["Venta_Vacia"],
         ]
         choicelist = ["entrega", "prep", "solic", "backoff", "sinventa"]
 
         df_pipeline["HTML_Cat"] = np.select(condlist, choicelist, default=None)
-        pipeline_df = df_pipeline[df_pipeline["HTML_Cat"].notna()].copy()
         pipeline_df = df_pipeline.dropna(subset=["HTML_Cat"])
         if not pipeline_df.empty:
             pipeline_dict = pipeline_df.groupby(["EJ_NORM", "HTML_Cat"]).size().unstack(fill_value=0).to_dict('index')
             
-        # 2. True Monthly Back Office calculation (Filtered by Month Start to End Date)
-        year = mes_sel_int // 100
-        month = mes_sel_int % 100
-        month_start = date(year, month, 1)
-        
-        bo_dt = parse_backoffice_datetime(df_html["Back Office"], window_start=month_start, window_end=end_dt)
-        df_html["BO_Fecha"] = bo_dt.dt.date
-        
+        # 2. True Back Office calculation by INTERVAL (Matches Transito logic)
+        interval_start = start_dt
+        interval_end = end_dt
+
+        bo_dt = choose_backoffice_dt_html(df_html, window_start=interval_start, window_end=interval_end)
+
+        df_html["BO_DT"] = bo_dt
+        df_html["BO_Fecha"] = df_html["BO_DT"].dt.date
+
         mask_bo = (
-            (df_html["Estatus_upper"] != "CANC ERROR") & 
-            (df_html["BO_Fecha"].notna()) &
-            (df_html["BO_Fecha"] >= month_start) & 
-            (df_html["BO_Fecha"] <= end_dt)
+            (df_html["Estatus_upper"] != "CANC ERROR") &
+            (df_html["BO_DT"].notna()) &
+            (df_html["BO_Fecha"] >= interval_start) &
+            (df_html["BO_Fecha"] <= interval_end)
         )
-        backoffice_df = df_html[mask_bo]
+
+        backoffice_df = df_html.loc[mask_bo].copy()
+
         if not backoffice_df.empty:
             total_back_dict = backoffice_df.groupby("EJ_NORM").size().to_dict()
 
-    # 1B. ✅ TRUE VENTAS (Exactly as shown in the Metas Tab)
-    # This reads from df_base, which is strictly filtered to the current month!
+    # 1B. TRUE VENTAS (From df_base filtered to month)
     ventas_reales_dict = {}
     if not df_base.empty:
         ventas_reales_dict = df_base.groupby("EJECUTIVO_norm").size().to_dict()
 
-    # 2. Get the dynamic days and period
+    # 2. Get dynamic strings for the period
     current_period = mes_labels.get(mes_sel, str(mes_sel)).title()
     dias_restantes_int = int(round(dias_hab_restantes)) if 'dias_hab_restantes' in locals() else 8
+    
+    if start_dt == end_dt:
+        back_label = f"Back {start_dt.strftime('%d/%m/%Y')}"
+    else:
+        back_label = f"Back {start_dt.strftime('%d/%m/%Y')} → {end_dt.strftime('%d/%m/%Y')}"
     
     # 3. Map your SQL normalized supervisor names to the HTML short IDs
     sup_map = {
@@ -4307,20 +4434,19 @@ with tabs[9]:
         normalize_name("MARIA FERNANDA MARTINEZ BISTRAIN"): "maria"
     }
 
-    # 4) ✅ metas maps for HTML (Marzo)
-    metas_map_html = load_metas_from_csv()                  # EJ_NORM -> Meta Marzo
-    metas_sup_map_html = load_metas_supervisor_from_excel() # SUP_NORM -> Meta Supervisor Marzo (sum)
-
-    # 5) Initialize the JSON payload structure (NOW it exists)
+    # 4. Initialize Single JSON Payload
     live_data_payload = {
         "diasRestantes": dias_restantes_int,
         "periodo": current_period,
+        "backLabel": back_label,
         "supData": {k: {"ventas":0, "backFeb":0, "entrega":0, "prep":0, "solic":0, "backoff":0, "sinventa":0} for k in sup_map.values()},
         "agents": {k: [] for k in sup_map.values()},
-        "supMetas": {}  # ✅ include here
+        "supMetas": {} 
     }
 
-    # ✅ send supervisor metas to HTML (coord/mgr views use ORG.supervisors[*].meta)
+    metas_map_html = load_metas_from_csv(int(mes_sel))
+    metas_sup_map_html = load_metas_supervisor_from_excel(int(mes_sel))
+
     for sup_norm, sup_id in sup_map.items():
         mv = metas_sup_map_html.get(sup_norm, 0)
         try:
@@ -4328,87 +4454,139 @@ with tabs[9]:
         except Exception:
             live_data_payload["supMetas"][sup_id] = 0
 
-    # 4. Initialize the JSON payload structure
-    live_data_payload = {
-        "diasRestantes": dias_restantes_int,
-        "periodo": current_period,
-        "supData": {k: {"ventas":0, "backFeb":0, "entrega":0, "prep":0, "solic":0, "backoff":0, "sinventa":0} for k in sup_map.values()},
-        "agents": {k: [] for k in sup_map.values()}
-    }
+    # ---------------------------------------------------------
+    # 5A-0) Build "last supervisor in current month sales"
+    #       from REAL ventas (needed for bajas with ventas)
+    # ---------------------------------------------------------
+    last_sup_by_ej = {}
+    last_name_by_ej = {}
 
-    # ✅ metas maps for HTML (Marzo)
-    metas_map_html = load_metas_from_csv()                  # EJ_NORM -> Meta Marzo
-    metas_sup_map_html = load_metas_supervisor_from_excel() # SUP_NORM -> Meta Supervisor Marzo (sum)
+    if not df_base.empty:
+        ventas_team = df_base.copy()
 
-    # ✅ send supervisor metas to HTML (coord/mgr views use ORG.supervisors[*].meta)
-    live_data_payload["supMetas"] = {}
-    for sup_norm, sup_id in sup_map.items():
-        mv = metas_sup_map_html.get(sup_norm, 0)
-        try:
-            live_data_payload["supMetas"][sup_id] = int(float(mv)) if pd.notna(mv) else 0
-        except Exception:
-            live_data_payload["supMetas"][sup_id] = 0
-    
-    # 5. Extract data automatically
+        ventas_team["EJECUTIVO"] = ventas_team["EJECUTIVO"].astype(str).str.strip()
+        ventas_team["Supervisor"] = ventas_team["Supervisor"].astype(str).str.strip()
+
+        ventas_team["EJECUTIVO_norm"] = ventas_team["EJECUTIVO"].apply(normalize_name)
+        ventas_team["Supervisor_norm"] = ventas_team["Supervisor"].apply(normalize_name)
+
+        # keep only supervisors that exist in the HTML map
+        ventas_team = ventas_team[ventas_team["Supervisor_norm"].isin(set(sup_map.keys()))].copy()
+
+        if not ventas_team.empty:
+            ventas_team["FECHA_DE_CAPTURA_SORT"] = pd.to_datetime(ventas_team["FECHA DE CAPTURA"], errors="coerce")
+            ventas_team = ventas_team.sort_values(["FECHA_DE_CAPTURA_SORT", "EJECUTIVO"], ascending=[True, True])
+
+            last_rows = ventas_team.drop_duplicates(subset=["EJECUTIVO_norm"], keep="last").copy()
+
+            last_sup_by_ej = last_rows.set_index("EJECUTIVO_norm")["Supervisor_norm"].to_dict()
+            last_name_by_ej = last_rows.set_index("EJECUTIVO_norm")["EJECUTIVO"].to_dict()
+
+    # ---------------------------------------------------------
+    # 5A) Fallback maps from detalle (names / supervisor / meta)
+    # ---------------------------------------------------------
+    sup_from_detalle = {}
+    name_from_detalle = {}
+    meta_from_detalle = {}
+
     if 'df_detalle_full' in locals() and not df_detalle_full.empty:
-        for _, row in df_detalle_full.iterrows():
-            sup_raw = row.get("Supervisor", "")
-            ejec_name = str(row.get("Ejecutivo", "")).strip()
-            
-            if ejec_name.upper() == "TOTAL" or str(sup_raw).strip().upper() == "TOTAL":
-                continue
-                
-            sup_norm = normalize_name(sup_raw)
-            ej_norm = normalize_name(ejec_name)
-            
-            if sup_norm in sup_map:
-                sup_id = sup_map[sup_norm]
-                
-                # A. Get Metas (from Tab 5)
-                _mv = metas_map_html.get(ej_norm, row.get("Meta", 0))
-                try:
-                    meta_val = int(float(_mv)) if pd.notna(_mv) else 0
-                except Exception:
-                    meta_val = 0
-                
-                # B. ✅ PULL TRUE VENTAS DIRECTLY FROM METAS LOGIC (df_base)
-                v_ventas = int(ventas_reales_dict.get(ej_norm, 0))
-                
-                # C. Get Pipeline Metrics
-                p_data = pipeline_dict.get(ej_norm, {})
-                v_entrega = int(p_data.get("entrega", 0))
-                v_prep    = int(p_data.get("prep", 0))
-                v_solic   = int(p_data.get("solic", 0))
-                v_backoff = int(p_data.get("backoff", 0))
-                v_sinventa= int(p_data.get("sinventa", 0))
+        det_tmp = df_detalle_full.copy()
+        det_tmp["Ejecutivo"] = det_tmp["Ejecutivo"].astype(str).str.strip()
+        det_tmp["Supervisor"] = det_tmp["Supervisor"].astype(str).str.strip()
 
-                # D. TRUE monthly Back Office total 
-                v_back_feb = int(total_back_dict.get(ej_norm, 0)) 
-                
-                # Format for HTML
-                agent_data = {
-                    "name": ejec_name,
-                    "meta": meta_val,
-                    "data": {
-                        "ventas": v_ventas, 
-                        "backFeb": v_back_feb, 
-                        "entrega": v_entrega,
-                        "prep": v_prep, 
-                        "solic": v_solic, 
-                        "backoff": v_backoff, 
-                        "sinventa": v_sinventa
-                    }
-                }
-                live_data_payload["agents"][sup_id].append(agent_data)
-                
-                # Accumulate the supervisor totals
-                live_data_payload["supData"][sup_id]["ventas"] += v_ventas
-                live_data_payload["supData"][sup_id]["backFeb"] += v_back_feb
-                live_data_payload["supData"][sup_id]["entrega"] += v_entrega
-                live_data_payload["supData"][sup_id]["prep"] += v_prep
-                live_data_payload["supData"][sup_id]["solic"] += v_solic
-                live_data_payload["supData"][sup_id]["backoff"] += v_backoff
-                live_data_payload["supData"][sup_id]["sinventa"] += v_sinventa
+        det_tmp = det_tmp[
+            (det_tmp["Ejecutivo"].str.upper() != "TOTAL") & 
+            (det_tmp["Supervisor"].str.upper() != "TOTAL")
+        ].copy()
+
+        det_tmp["EJ_NORM"] = det_tmp["Ejecutivo"].apply(normalize_name)
+        det_tmp["SUP_NORM"] = det_tmp["Supervisor"].apply(normalize_name)
+
+        # keep only supervisors visible in HTML
+        det_tmp = det_tmp[det_tmp["SUP_NORM"].isin(set(sup_map.keys()))].copy()
+
+        if "Ventas" in det_tmp.columns:
+            det_tmp["Ventas"] = pd.to_numeric(det_tmp["Ventas"], errors="coerce").fillna(0)
+            det_tmp = det_tmp.sort_values(["Ventas", "Ejecutivo"], ascending=[False, True])
+        else:
+            det_tmp = det_tmp.sort_values(["Ejecutivo"])
+
+        det_tmp = det_tmp.drop_duplicates(subset=["EJ_NORM"], keep="first").copy()
+        sup_from_detalle = det_tmp.set_index("EJ_NORM")["SUP_NORM"].to_dict()
+        name_from_detalle = det_tmp.set_index("EJ_NORM")["Ejecutivo"].to_dict()
+
+        if "Meta" in det_tmp.columns:
+            meta_from_detalle = pd.to_numeric(det_tmp["Meta"], errors="coerce").fillna(0).groupby(det_tmp["EJ_NORM"]).first().to_dict()
+
+    # ---------------------------------------------------------
+    # 5B) Build UNIQUE universe of agents
+    # ---------------------------------------------------------
+    all_agent_norms = (
+        set(ventas_reales_dict.keys())
+        | set(total_back_dict.keys())
+        | set(pipeline_dict.keys())
+        | set(sup_from_detalle.keys())
+    )
+
+    for ej_norm in sorted(all_agent_norms):
+        sup_norm = last_sup_by_ej.get(ej_norm) or sup_from_detalle.get(ej_norm)
+
+        if sup_norm not in sup_map:
+            continue
+
+        sup_id = sup_map[sup_norm]
+        ejec_name = str(last_name_by_ej.get(ej_norm, "")).strip() or str(name_from_detalle.get(ej_norm, "")).strip() or str(ej_norm).strip()
+
+        _mv = metas_map_html.get(ej_norm, meta_from_detalle.get(ej_norm, 0))
+        try:
+            meta_val = int(float(_mv)) if pd.notna(_mv) else 0
+        except Exception:
+            meta_val = 0
+
+        v_ventas = int(ventas_reales_dict.get(ej_norm, 0) or 0)
+        p_data = pipeline_dict.get(ej_norm, {})
+        v_entrega  = int(p_data.get("entrega", 0) or 0)
+        v_prep     = int(p_data.get("prep", 0) or 0)
+        v_solic    = int(p_data.get("solic", 0) or 0)
+        v_backoff  = int(p_data.get("backoff", 0) or 0)
+        v_sinventa = int(p_data.get("sinventa", 0) or 0)
+        v_back_feb = int(total_back_dict.get(ej_norm, 0) or 0)
+
+        agent_data = {
+            "name": ejec_name,
+            "meta": meta_val,
+            "data": {
+                "ventas": v_ventas,
+                "backFeb": v_back_feb,
+                "entrega": v_entrega,
+                "prep": v_prep,
+                "solic": v_solic,
+                "backoff": v_backoff,
+                "sinventa": v_sinventa,
+            }
+        }
+        live_data_payload["agents"][sup_id].append(agent_data)
+
+    # ---------------------------------------------------------
+    # 5C) Sort agents inside each supervisor
+    # ---------------------------------------------------------
+    for _sup_id in live_data_payload["agents"].keys():
+        live_data_payload["agents"][_sup_id] = sorted(
+            live_data_payload["agents"][_sup_id],
+            key=lambda a: (-int(a.get("data", {}).get("ventas", 0) or 0), str(a.get("name", "")))
+        )
+
+    # ---------------------------------------------------------
+    # 5D) Recompute supervisor totals FROM UNIQUE AGENTS
+    # ---------------------------------------------------------
+    for _sup_id, _agents in live_data_payload["agents"].items():
+        live_data_payload["supData"][_sup_id]["ventas"]   = int(sum(a["data"].get("ventas", 0)   for a in _agents))
+        live_data_payload["supData"][_sup_id]["backFeb"]  = int(sum(a["data"].get("backFeb", 0)  for a in _agents))
+        live_data_payload["supData"][_sup_id]["entrega"]  = int(sum(a["data"].get("entrega", 0)  for a in _agents))
+        live_data_payload["supData"][_sup_id]["prep"]     = int(sum(a["data"].get("prep", 0)     for a in _agents))
+        live_data_payload["supData"][_sup_id]["solic"]    = int(sum(a["data"].get("solic", 0)    for a in _agents))
+        live_data_payload["supData"][_sup_id]["backoff"]  = int(sum(a["data"].get("backoff", 0)  for a in _agents))
+        live_data_payload["supData"][_sup_id]["sinventa"] = int(sum(a["data"].get("sinventa", 0) for a in _agents))
 
     # 6. Convert to JSON and Inject into HTML
     import os
@@ -4433,4 +4611,3 @@ with tabs[9]:
 
     except FileNotFoundError:
         st.error("No se encontró el archivo 'dashboard.html'. Asegúrate de que esté en la misma carpeta.")
-
