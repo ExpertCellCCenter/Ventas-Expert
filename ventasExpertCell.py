@@ -4361,18 +4361,35 @@ with tabs[9]:
         today = date.today()
         mes_sel_int = today.year * 100 + today.month
         
+    # ✅ 1. Determine Dynamic Interval based on Selected Month (NOT Sidebar start_dt/end_dt)
+    m_start, m_end_full = month_bounds(mes_sel_int)
+    today_dt = date.today()
+    
+    # If the month is currently running, cut at today. If it passed, take the full month.
+    if m_start <= today_dt <= m_end_full:
+        m_end = today_dt
+    elif today_dt < m_start:
+        m_end = m_start
+    else:
+        m_end = m_end_full
+        
+    interval_start = m_start
+    interval_end = m_end
+
     # ---------------------------------------------------------
     # ⚡ CALCULATE HTML DATA USING INSTANT CACHED MEMORY
     # ---------------------------------------------------------
     pipeline_dict = {}
     total_back_dict = {}
+    
+    # Use global end_dt for fetching so we don't accidentally trim the query too early
     prog_history = fetch_programacion_history(end_dt)
     
     if not prog_history.empty:
         df_html = prog_history.copy()
         
-        # 1. Pipeline calculation (Filtered by sidebar dates)
-        mask_pipeline = (df_html["Fecha_Creacion_DT"] >= start_dt) & (df_html["Fecha_Creacion_DT"] <= end_dt)
+        # 1. Pipeline calculation (Filtered by the computed MONTH interval)
+        mask_pipeline = (df_html["Fecha_Creacion_DT"] >= interval_start) & (df_html["Fecha_Creacion_DT"] <= interval_end)
         df_pipeline = df_html[mask_pipeline].copy()
         
         condlist = [
@@ -4386,18 +4403,19 @@ with tabs[9]:
 
         df_pipeline["HTML_Cat"] = np.select(condlist, choicelist, default=None)
         pipeline_df = df_pipeline.dropna(subset=["HTML_Cat"])
+        
         if not pipeline_df.empty:
             pipeline_dict = pipeline_df.groupby(["EJ_NORM", "HTML_Cat"]).size().unstack(fill_value=0).to_dict('index')
             
-        # 2. True Back Office calculation by INTERVAL (Matches Transito logic)
-        interval_start = start_dt
-        interval_end = end_dt
-
-        bo_dt = choose_backoffice_dt_html(df_html, window_start=interval_start, window_end=interval_end)
+        # 2. ✅ FIXED: True Back Office Calculation (Matches Transito EXACTLY)
+        # CRITICAL: We pass the broad global start_dt/end_dt to the parser so it doesn't 
+        # force ambiguous dates (like 03/02/2026) into March incorrectly.
+        bo_dt = choose_backoffice_dt_html(df_html, window_start=start_dt, window_end=end_dt)
 
         df_html["BO_DT"] = bo_dt
         df_html["BO_Fecha"] = df_html["BO_DT"].dt.date
 
+        # Then we filter the results by the dynamic month interval
         mask_bo = (
             (df_html["Estatus_upper"] != "CANC ERROR") &
             (df_html["BO_DT"].notna()) &
@@ -4410,19 +4428,19 @@ with tabs[9]:
         if not backoffice_df.empty:
             total_back_dict = backoffice_df.groupby("EJ_NORM").size().to_dict()
 
-    # 1B. TRUE VENTAS (From df_base filtered to month)
+    # 1B. TRUE VENTAS (From df_base strictly filtered to the month)
     ventas_reales_dict = {}
     if not df_base.empty:
         ventas_reales_dict = df_base.groupby("EJECUTIVO_norm").size().to_dict()
 
-    # 2. Get dynamic strings for the period
+    # 2. Get dynamic strings for the period display
     current_period = mes_labels.get(mes_sel, str(mes_sel)).title()
     dias_restantes_int = int(round(dias_hab_restantes)) if 'dias_hab_restantes' in locals() else 8
     
-    if start_dt == end_dt:
-        back_label = f"Back {start_dt.strftime('%d/%m/%Y')}"
+    if interval_start == interval_end:
+        back_label = f"BACK {interval_start.strftime('%d/%m/%Y')}"
     else:
-        back_label = f"Back {start_dt.strftime('%d/%m/%Y')} → {end_dt.strftime('%d/%m/%Y')}"
+        back_label = f"BACK {interval_start.strftime('%d/%m/%Y')} → {interval_end.strftime('%d/%m/%Y')}"
     
     # 3. Map your SQL normalized supervisor names to the HTML short IDs
     sup_map = {
@@ -4458,6 +4476,7 @@ with tabs[9]:
     # 5A-0) Build "last supervisor in current month sales"
     #       from REAL ventas (needed for bajas with ventas)
     # ---------------------------------------------------------
+    # ✅ FIX: Initialized securely at the root so it NEVER triggers a NameError
     last_sup_by_ej = {}
     last_name_by_ej = {}
 
