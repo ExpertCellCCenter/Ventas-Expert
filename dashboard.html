@@ -333,6 +333,7 @@ body{background:var(--bg);color:var(--text);font-family:'DM Sans',sans-serif;min
 //  ORG STRUCTURE
 // ══════════════════════════════════════════════
 const ORG = {
+  backLabel: 'Back Mes',
   coordinators: {
     eduardo: { name: 'Eduardo', color: '#3AA5DC', supervisors: ['reyna','alan','carlos','alfredo'] },
     luisa:   { name: 'Luisa',   color: '#FCB314', supervisors: ['jorge','maria'] },
@@ -553,7 +554,7 @@ function buildInputTable() {
 
   document.getElementById('inputHead').innerHTML = `<tr>
     <th style="min-width:140px;text-align:left;padding-left:14px">${label}</th>
-    <th class="ed">Meta</th><th class="ed">Ventas</th><th class="ed">Back Feb</th>
+    <th class="ed">Meta</th><th class="ed">Ventas</th><th class="ed">${ORG.backLabel || 'Back Mes'}</th>
     <th class="calc">Faltan</th><th class="calc">% Conv</th><th class="calc">Meta Back</th>
     <th class="calc">Meta Diaria Prog.</th><th class="calc">Meta desde hoy (act.)</th>
     <th class="ed col-div">Entrega</th><th class="ed">Prep.</th><th class="ed">Solic.</th>
@@ -816,7 +817,7 @@ function buildReport() {
       </div>
       <div class="chart-grid">
         <div class="chart-card"><h3>Meta Diaria Programadas</h3><div class="chart-wrap" id="cwDi"></div></div>
-        <div class="chart-card"><h3>% Conversión Back Feb</h3><div class="chart-wrap" id="cwCo"></div></div>
+        <div class="chart-card"><h3>% Conversión ${ORG.backLabel || 'Back Mes'}</h3><div class="chart-wrap" id="cwCo"></div></div>
       </div>
       <div class="chart-grid">
         <div class="chart-card full"><h3>Desglose Pipeline en Tránsito (${tT} totales)</h3>
@@ -1073,6 +1074,10 @@ function showToast(msg) {
 const INJECTED_DATA = /*PYTHON_INJECTS_JSON_HERE*/ null;
 
 if (INJECTED_DATA) {
+
+  if (INJECTED_DATA.backLabel) {
+    ORG.backLabel = INJECTED_DATA.backLabel;
+  }
   // 1. Override the hardcoded ORG data with the live Python data
   if (INJECTED_DATA.supData) {
       Object.assign(ORG.supData, INJECTED_DATA.supData);
