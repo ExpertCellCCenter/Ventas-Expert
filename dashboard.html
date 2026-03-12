@@ -37,6 +37,7 @@ body{background:var(--bg);color:var(--text);font-family:'DM Sans',sans-serif;min
 .btn-sm{padding:6px 12px;font-size:11px;border-radius:8px}
 .btn-ghost{background:transparent;color:var(--text-dim);border:1px solid var(--border);padding:6px 12px;font-size:11px;border-radius:8px}
 .btn-ghost:hover{color:var(--text);border-color:var(--text-dim)}
+.btn-disabled{opacity:.45;cursor:not-allowed;pointer-events:none}
 
 /* ── Login Screen ── */
 .login-screen{display:flex;align-items:center;justify-content:center;min-height:80vh;flex-direction:column;gap:32px;animation:fadeUp .5s ease}
@@ -76,7 +77,10 @@ body{background:var(--bg);color:var(--text);font-family:'DM Sans',sans-serif;min
 .config-row{display:flex;gap:14px;margin-bottom:18px;align-items:end;flex-wrap:wrap}
 .config-field{display:flex;flex-direction:column;gap:3px}
 .config-field label{font-size:10px;color:var(--text-dim);text-transform:uppercase;letter-spacing:.8px;font-weight:600}
-.config-field input,.config-field select{background:var(--input-bg);border:1px solid var(--border);border-radius:8px;color:var(--text);padding:7px 10px;font-size:13px;font-family:'DM Sans',sans-serif;transition:border-color .2s}
+.config-field input,.config-field select{
+  background:var(--input-bg);border:1px solid var(--border);border-radius:8px;color:var(--text);
+  padding:7px 10px;font-size:13px;font-family:'DM Sans',sans-serif;transition:border-color .2s
+}
 .config-field input:focus,.config-field select:focus{outline:none;border-color:var(--border-focus)}
 
 /* ── Agent Management ── */
@@ -103,9 +107,27 @@ body{background:var(--bg);color:var(--text);font-family:'DM Sans',sans-serif;min
 .data-table tfoot td{padding:8px 3px;text-align:center;font-weight:700;font-size:12px;border-top:2px solid var(--accent);color:var(--accent)}
 .data-table tfoot td:first-child{text-align:left;padding-left:14px}
 
-.data-table input[type="number"]{background:var(--input-bg);border:1px solid var(--border);border-radius:5px;color:#fff;padding:4px 2px;font-size:12px;font-family:'DM Sans',sans-serif;width:52px;text-align:center;transition:all .2s}
-.data-table input[type="number"]:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 2px var(--accent-glow)}
-.data-table input[type="number"]::-webkit-inner-spin-button,.data-table input[type="number"]::-webkit-outer-spin-button{opacity:1;cursor:pointer;filter:invert(1) brightness(2)}
+.data-table input[type="number"],
+.data-table input[type="text"],
+.config-field input[readonly]{
+  background:rgba(255,255,255,.04);
+  border:1px solid rgba(255,255,255,.06);
+  color:var(--text-dim);
+  padding:4px 2px;
+  font-size:12px;
+  font-family:'DM Sans',sans-serif;
+  text-align:center;
+  transition:none;
+  pointer-events:none;
+  user-select:none;
+  cursor:not-allowed;
+}
+.data-table input[type="number"]{width:52px;border-radius:5px}
+.data-table input[readonly]::-webkit-inner-spin-button,
+.data-table input[readonly]::-webkit-outer-spin-button{
+  opacity:0;
+  pointer-events:none;
+}
 
 .cc{color:var(--text-dim);font-style:italic}
 .cc.g{color:var(--green);font-weight:600;font-style:normal}
@@ -192,13 +214,10 @@ body{background:var(--bg);color:var(--text);font-family:'DM Sans',sans-serif;min
 
 <div class="modal-overlay" id="importModal">
   <div class="modal">
-    <h3>📋 Importar lista de agentes</h3>
-    <p style="color:var(--text-dim);font-size:12px;margin-bottom:12px">Pega la lista con formato: <strong>Nombre, Meta</strong> (uno por línea). O carga un JSON.</p>
-    <textarea id="importText" placeholder="Juan Pérez, 25&#10;María López, 22&#10;Carlos Ruiz, 28"></textarea>
+    <h3>🔒 Modo solo lectura</h3>
+    <p style="color:var(--text-dim);font-size:12px;margin-bottom:12px">La administración manual está bloqueada. Esta vista solo recibe información desde Streamlit.</p>
     <div class="modal-actions">
-      <button class="btn btn-ghost" onclick="closeModal()">Cancelar</button>
-      <button class="btn btn-secondary btn-sm" onclick="importFromFile()">📂 Cargar JSON</button>
-      <button class="btn btn-primary btn-sm" onclick="importFromText()">✓ Importar</button>
+      <button class="btn btn-primary btn-sm" onclick="closeModal()">Entendido</button>
     </div>
   </div>
 </div>
@@ -268,8 +287,6 @@ body{background:var(--bg);color:var(--text);font-family:'DM Sans',sans-serif;min
     </div>
     <div class="btn-group">
       <button class="btn btn-ghost" onclick="logout()">← Cambiar perfil</button>
-      <button class="btn btn-secondary btn-sm" onclick="saveAllData()">💾 Guardar</button>
-      <button class="btn btn-secondary btn-sm" onclick="loadAllData()">📂 Cargar</button>
       <button class="btn btn-primary btn-sm" onclick="switchTab('report')">▶ Ver informe</button>
       <button class="btn btn-success btn-sm" onclick="downloadPDF()">📄 PDF</button>
     </div>
@@ -284,28 +301,21 @@ body{background:var(--bg);color:var(--text);font-family:'DM Sans',sans-serif;min
     <div class="config-row">
       <div class="config-field">
         <label>Días Restantes</label>
-        <input type="number" id="diasRestantes" value="9" min="1" max="31" onchange="recalcAll()">
+        <input type="number" id="diasRestantes" value="9" min="1" max="31" readonly>
       </div>
       <div class="config-field">
         <label>Periodo</label>
-        <input type="text" id="periodoLabel" value="Febrero 2026" style="width:140px">
+        <input type="text" id="periodoLabel" value="Febrero 2026" style="width:140px" readonly>
       </div>
-      <div id="agentMgmtArea" style="display:none;margin-left:auto">
-        <div class="agent-mgmt">
-          <h4>👥 Agentes</h4>
-          <input class="agent-input" id="newAgentName" placeholder="Nombre del agente">
-          <input class="agent-input agent-meta-input" id="newAgentMeta" type="number" placeholder="Meta" min="1">
-          <button class="btn btn-primary btn-sm" onclick="addAgent()">+ Agregar</button>
-          <button class="btn btn-ghost" onclick="openImportModal()">📋 Importar</button>
-          <span class="agent-count" id="agentCount">0 agentes</span>
-        </div>
+      <div style="margin-left:auto">
+        <span class="badge-info">Solo lectura · Datos alimentados por Streamlit</span>
       </div>
     </div>
 
     <div class="table-wrap">
       <div class="table-header">
         <h3 id="tableTitle">Datos por equipo</h3>
-        <span class="badge-info">Azul = editable · Gris = calculado</span>
+        <span class="badge-info">Datos del sistema · No editable</span>
       </div>
       <div style="overflow-x:auto">
         <table class="data-table">
@@ -319,7 +329,7 @@ body{background:var(--bg);color:var(--text);font-family:'DM Sans',sans-serif;min
 
   <div class="panel" id="panelReport">
     <div style="margin-bottom:14px;display:flex;gap:8px;justify-content:flex-end">
-      <button class="btn btn-secondary btn-sm" onclick="switchTab('input')">← Editar</button>
+      <button class="btn btn-secondary btn-sm" onclick="switchTab('input')">← Ver datos</button>
       <button class="btn btn-success btn-sm" onclick="downloadPDF()">📄 PDF</button>
     </div>
     <div id="reportPreview"></div>
@@ -329,6 +339,16 @@ body{background:var(--bg);color:var(--text);font-family:'DM Sans',sans-serif;min
 </div>
 
 <script>
+// ══════════════════════════════════════════════
+//  LOCKED MODE
+// ══════════════════════════════════════════════
+const LOCKED_MODE = true;
+
+const SYSTEM_STATE = {
+  diasRestantes: 9,
+  periodo: 'Febrero 2026'
+};
+
 // ══════════════════════════════════════════════
 //  ORG STRUCTURE
 // ══════════════════════════════════════════════
@@ -346,11 +366,9 @@ const ORG = {
     jorge:   { name: 'Jorge Miguel Ureña Z.',    short: 'Jorge M.',   coord: 'luisa',   meta: 128 },
     maria:   { name: 'María Fernanda Mtz. B.',   short: 'María F.',   coord: 'luisa',   meta: 130 },
   },
-  // Agent rosters (populated by supervisors)
   agents: {
     reyna: [], alan: [], carlos: [], alfredo: [], jorge: [], maria: []
   },
-  // Supervisor-level daily data (for coord/mgr views)
   supData: {
     reyna:   { ventas:90, backFeb:107, entrega:14, prep:2, solic:1, backoff:3, sinventa:3 },
     alan:    { ventas:58, backFeb:69,  entrega:6,  prep:1, solic:0, backoff:0, sinventa:4 },
@@ -361,8 +379,104 @@ const ORG = {
   }
 };
 
-let currentUser = null; // { role, id }
+let currentUser = null;
 let chartInstances = [];
+
+// ══════════════════════════════
+//  HELPERS
+// ══════════════════════════════
+function showToast(msg) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  setTimeout(() => t.classList.remove('show'), 2500);
+}
+
+function openImportModal() {
+  if (LOCKED_MODE) {
+    document.getElementById('importModal').classList.add('show');
+    return;
+  }
+}
+
+function closeModal() {
+  document.getElementById('importModal').classList.remove('show');
+}
+
+function destroyCharts() {
+  chartInstances.forEach(c => c.destroy());
+  chartInstances = [];
+}
+
+function syncSystemInputs() {
+  const diasEl = document.getElementById('diasRestantes');
+  const periodoEl = document.getElementById('periodoLabel');
+  if (diasEl) diasEl.value = SYSTEM_STATE.diasRestantes;
+  if (periodoEl) periodoEl.value = SYSTEM_STATE.periodo;
+}
+
+function getSystemDias() {
+  return Number(SYSTEM_STATE.diasRestantes) || 0;
+}
+
+function getSystemPeriodo() {
+  return String(SYSTEM_STATE.periodo || '');
+}
+
+function safeNum(v) {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : 0;
+}
+
+function getLevelLabel() {
+  return currentUser.role === 'sup' ? 'Agente' : 'Supervisor';
+}
+
+function getViewMembers() {
+  const { role, id } = currentUser;
+
+  if (role === 'sup') {
+    return (ORG.agents[id] || []).map((a, i) => ({
+      key: `agent_${id}_${i}`,
+      name: a.name || '',
+      short: (a.name || '').split(' ')[0] || '',
+      meta: safeNum(a.meta),
+      data: {
+        ventas: safeNum(a?.data?.ventas),
+        backFeb: safeNum(a?.data?.backFeb),
+        entrega: safeNum(a?.data?.entrega),
+        prep: safeNum(a?.data?.prep),
+        solic: safeNum(a?.data?.solic),
+        backoff: safeNum(a?.data?.backoff),
+        sinventa: safeNum(a?.data?.sinventa),
+      }
+    }));
+  }
+
+  let supKeys;
+  if (role === 'coord') supKeys = ORG.coordinators[id].supervisors;
+  else supKeys = Object.keys(ORG.supervisors);
+
+  return supKeys.map(sk => {
+    const s = ORG.supervisors[sk];
+    const d = ORG.supData[sk] || {};
+    return {
+      key: sk,
+      name: s.name,
+      short: s.short,
+      meta: safeNum(s.meta),
+      data: {
+        ventas: safeNum(d.ventas),
+        backFeb: safeNum(d.backFeb),
+        entrega: safeNum(d.entrega),
+        prep: safeNum(d.prep),
+        solic: safeNum(d.solic),
+        backoff: safeNum(d.backoff),
+        sinventa: safeNum(d.sinventa),
+      }
+    };
+  });
+}
 
 // ══════════════════════════════
 //  LOGIN
@@ -392,12 +506,10 @@ function loginAs(role, id) {
     avatar.style.background = 'var(--accent)';
     avatar.textContent = s.short.slice(0,2).toUpperCase();
     uname.textContent = s.name;
-    urole.textContent = 'Supervisor · ' + ORG.agents[id].length + ' agentes';
+    urole.textContent = 'Supervisor · ' + (ORG.agents[id] || []).length + ' agentes';
   }
 
-  // Show agent management only for supervisors
-  document.getElementById('agentMgmtArea').style.display = role === 'sup' ? '' : 'none';
-
+  syncSystemInputs();
   buildInputTable();
   switchTab('input');
 }
@@ -410,164 +522,50 @@ function logout() {
 }
 
 // ══════════════════════════════
-//  GET CURRENT ROSTER
+//  BLOCKED MANUAL ACTIONS
 // ══════════════════════════════
-function getViewMembers() {
-  const { role, id } = currentUser;
-  if (role === 'sup') {
-    return ORG.agents[id].map((a, i) => ({
-      key: `agent_${id}_${i}`, name: a.name, short: a.name.split(' ')[0],
-      meta: a.meta, data: a.data || { ventas:0, backFeb:0, entrega:0, prep:0, solic:0, backoff:0, sinventa:0 }
-    }));
-  }
-  // coord or mgr
-  let supKeys;
-  if (role === 'coord') supKeys = ORG.coordinators[id].supervisors;
-  else supKeys = Object.keys(ORG.supervisors);
-
-  return supKeys.map(sk => {
-    const s = ORG.supervisors[sk];
-    const d = ORG.supData[sk];
-    return { key: sk, name: s.name, short: s.short, meta: s.meta, data: d };
-  });
-}
-
-function getLevelLabel() {
-  return currentUser.role === 'sup' ? 'Agente' : 'Supervisor';
-}
+function addAgent() { showToast('Bloqueado: esta vista solo recibe datos de Streamlit'); }
+function removeAgent() { showToast('Bloqueado: esta vista solo recibe datos de Streamlit'); }
+function importFromText() { showToast('Bloqueado: esta vista solo recibe datos de Streamlit'); }
+function importFromFile() { showToast('Bloqueado: esta vista solo recibe datos de Streamlit'); }
+function saveAllData() { showToast('Bloqueado: guardado manual deshabilitado'); }
+function loadAllData() { showToast('Bloqueado: carga manual deshabilitada'); }
 
 // ══════════════════════════════
-//  AGENT MANAGEMENT
-// ══════════════════════════════
-function addAgent() {
-  if (currentUser.role !== 'sup') return;
-  const nameEl = document.getElementById('newAgentName');
-  const metaEl = document.getElementById('newAgentMeta');
-  const name = nameEl.value.trim();
-  const meta = parseInt(metaEl.value) || 0;
-  if (!name) return showToast('Ingresa nombre del agente');
-  if (!meta) return showToast('Ingresa la meta');
-
-  ORG.agents[currentUser.id].push({
-    name, meta, data: { ventas:0, backFeb:0, entrega:0, prep:0, solic:0, backoff:0, sinventa:0 }
-  });
-  nameEl.value = ''; metaEl.value = '';
-  buildInputTable();
-  updateAgentCount();
-  showToast(`${name} agregado ✓`);
-}
-
-function removeAgent(idx) {
-  if (!confirm('¿Eliminar a ' + ORG.agents[currentUser.id][idx].name + '?')) return;
-  ORG.agents[currentUser.id].splice(idx, 1);
-  buildInputTable();
-  updateAgentCount();
-}
-
-function updateAgentCount() {
-  if (currentUser.role === 'sup') {
-    document.getElementById('agentCount').textContent = ORG.agents[currentUser.id].length + ' agentes';
-    document.getElementById('userRole').textContent = 'Supervisor · ' + ORG.agents[currentUser.id].length + ' agentes';
-  }
-}
-
-function openImportModal() { document.getElementById('importModal').classList.add('show'); }
-function closeModal() { document.getElementById('importModal').classList.remove('show'); }
-
-function importFromText() {
-  const text = document.getElementById('importText').value.trim();
-  if (!text) return;
-  const lines = text.split('\n').filter(l => l.trim());
-  let count = 0;
-  lines.forEach(line => {
-    const parts = line.split(',').map(s => s.trim());
-    if (parts.length >= 2) {
-      const name = parts[0];
-      const meta = parseInt(parts[1]) || 20;
-      ORG.agents[currentUser.id].push({
-        name, meta, data: { ventas:0, backFeb:0, entrega:0, prep:0, solic:0, backoff:0, sinventa:0 }
-      });
-      count++;
-    }
-  });
-  closeModal();
-  buildInputTable();
-  updateAgentCount();
-  showToast(`${count} agentes importados ✓`);
-  document.getElementById('importText').value = '';
-}
-
-function importFromFile() {
-  const input = document.createElement('input');
-  input.type = 'file'; input.accept = '.json,.csv';
-  input.onchange = e => {
-    const file = e.target.files[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = ev => {
-      try {
-        if (file.name.endsWith('.json')) {
-          const data = JSON.parse(ev.target.result);
-          if (Array.isArray(data)) {
-            data.forEach(a => {
-              ORG.agents[currentUser.id].push({
-                name: a.name || a.nombre || '',
-                meta: a.meta || 20,
-                data: a.data || { ventas:0, backFeb:0, entrega:0, prep:0, solic:0, backoff:0, sinventa:0 }
-              });
-            });
-          }
-        } else {
-          // CSV
-          const lines = ev.target.result.split('\n').filter(l => l.trim());
-          lines.forEach((line, i) => {
-            if (i === 0 && line.toLowerCase().includes('nombre')) return; // skip header
-            const parts = line.split(',').map(s => s.trim());
-            if (parts[0]) {
-              ORG.agents[currentUser.id].push({
-                name: parts[0], meta: parseInt(parts[1]) || 20,
-                data: { ventas:0, backFeb:0, entrega:0, prep:0, solic:0, backoff:0, sinventa:0 }
-              });
-            }
-          });
-        }
-        closeModal();
-        buildInputTable();
-        updateAgentCount();
-        showToast('Agentes importados ✓');
-      } catch(e) { showToast('Error en archivo'); }
-    };
-    reader.readAsText(file);
-  };
-  input.click();
-}
-
-// ══════════════════════════════
-//  INPUT TABLE
+//  INPUT TABLE (READ ONLY)
 // ══════════════════════════════
 function buildInputTable() {
+  if (!currentUser) return;
+
   const members = getViewMembers();
   const label = getLevelLabel();
-  const isSup = currentUser.role === 'sup';
 
   document.getElementById('tableTitle').textContent = `Datos por ${label}`;
 
   document.getElementById('inputHead').innerHTML = `<tr>
     <th style="min-width:140px;text-align:left;padding-left:14px">${label}</th>
-    <th class="ed">Meta</th><th class="ed">Ventas</th><th class="ed">${ORG.backLabel || 'Back Mes'}</th>
-    <th class="calc">Faltan</th><th class="calc">% Conv</th><th class="calc">Meta Back</th>
-    <th class="calc">Meta Diaria Prog.</th><th class="calc">Meta desde hoy (act.)</th>
-    <th class="ed col-div">Entrega</th><th class="ed">Prep.</th><th class="ed">Solic.</th>
-    <th class="ed">Back Off.</th><th class="ed">Entreg. s/v</th><th class="calc">Tránsito</th>
-    ${isSup ? '<th></th>' : ''}
+    <th class="ed">Meta</th>
+    <th class="ed">Ventas</th>
+    <th class="ed">${ORG.backLabel || 'Back Mes'}</th>
+    <th class="calc">Faltan</th>
+    <th class="calc">% Conv</th>
+    <th class="calc">Meta Back</th>
+    <th class="calc">Meta Diaria Prog.</th>
+    <th class="calc">Meta desde hoy (act.)</th>
+    <th class="ed col-div">Entrega</th>
+    <th class="ed">Prep.</th>
+    <th class="ed">Solic.</th>
+    <th class="ed">Back Off.</th>
+    <th class="ed">Entreg. s/v</th>
+    <th class="calc">Tránsito</th>
   </tr>`;
 
   const tbody = document.getElementById('inputBody');
   tbody.innerHTML = '';
 
   if (members.length === 0) {
-    tbody.innerHTML = `<tr><td colspan="16" style="text-align:center;padding:30px;color:var(--text-dim)">
-      ${isSup ? 'Agrega agentes arriba para comenzar ↑' : 'No hay datos disponibles'}
+    tbody.innerHTML = `<tr><td colspan="15" style="text-align:center;padding:30px;color:var(--text-dim)">
+      No hay datos disponibles desde Streamlit
     </td></tr>`;
     document.getElementById('inputFoot').innerHTML = '';
     return;
@@ -577,39 +575,69 @@ function buildInputTable() {
     const d = m.data;
     tbody.innerHTML += `<tr>
       <td>${m.name}</td>
-      <td><input type="number" id="meta_${i}" value="${m.meta}" onchange="recalcAll()"></td>
-      <td><input type="number" id="ventas_${i}" value="${d.ventas}" onchange="recalcAll()"></td>
-      <td><input type="number" id="backFeb_${i}" value="${d.backFeb}" onchange="recalcAll()"></td>
-      <td id="faltan_${i}" class="cc"></td><td id="conv_${i}" class="cc"></td>
-      <td id="metaBack_${i}" class="cc"></td><td id="diaria_${i}" class="cc"></td><td id="metaDesde_${i}" class="cc"></td>
-      <td class="col-div"><input type="number" id="entrega_${i}" value="${d.entrega}" onchange="recalcAll()"></td>
-      <td><input type="number" id="prep_${i}" value="${d.prep}" onchange="recalcAll()"></td>
-      <td><input type="number" id="solic_${i}" value="${d.solic}" onchange="recalcAll()"></td>
-      <td><input type="number" id="backoff_${i}" value="${d.backoff}" onchange="recalcAll()"></td>
-      <td><input type="number" id="sinventa_${i}" value="${d.sinventa}" onchange="recalcAll()"></td>
+      <td><input type="number" id="meta_${i}" value="${m.meta}" readonly tabindex="-1"></td>
+      <td><input type="number" id="ventas_${i}" value="${d.ventas}" readonly tabindex="-1"></td>
+      <td><input type="number" id="backFeb_${i}" value="${d.backFeb}" readonly tabindex="-1"></td>
+      <td id="faltan_${i}" class="cc"></td>
+      <td id="conv_${i}" class="cc"></td>
+      <td id="metaBack_${i}" class="cc"></td>
+      <td id="diaria_${i}" class="cc"></td>
+      <td id="metaDesde_${i}" class="cc"></td>
+      <td class="col-div"><input type="number" id="entrega_${i}" value="${d.entrega}" readonly tabindex="-1"></td>
+      <td><input type="number" id="prep_${i}" value="${d.prep}" readonly tabindex="-1"></td>
+      <td><input type="number" id="solic_${i}" value="${d.solic}" readonly tabindex="-1"></td>
+      <td><input type="number" id="backoff_${i}" value="${d.backoff}" readonly tabindex="-1"></td>
+      <td><input type="number" id="sinventa_${i}" value="${d.sinventa}" readonly tabindex="-1"></td>
       <td id="transito_${i}" class="cc"></td>
-      ${isSup ? `<td><button class="btn-danger btn-sm" onclick="removeAgent(${i})">✕</button></td>` : ''}
     </tr>`;
   });
+
   recalcAll();
 }
 
-function gv(id) { const el = document.getElementById(id); return el ? parseFloat(el.value) || 0 : 0; }
+function setC(id, val, cls) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.textContent = val;
+  el.className = 'cc' + (cls ? ' ' + cls : '');
+}
 
 function recalcAll() {
+  if (!currentUser) return;
+
+  syncSystemInputs();
+
   const members = getViewMembers();
-  const dias = gv('diasRestantes');
+  const dias = getSystemDias();
   if (members.length === 0) return;
 
   members.forEach((m, i) => {
-    const meta = gv(`meta_${i}`);
-    const ventas = gv(`ventas_${i}`);
-    const backFeb = gv(`backFeb_${i}`);
-    const entrega = gv(`entrega_${i}`);
-    const prep = gv(`prep_${i}`);
-    const solic = gv(`solic_${i}`);
-    const backoff = gv(`backoff_${i}`);
-    const sinventa = gv(`sinventa_${i}`);
+    const meta = safeNum(m.meta);
+    const ventas = safeNum(m.data.ventas);
+    const backFeb = safeNum(m.data.backFeb);
+    const entrega = safeNum(m.data.entrega);
+    const prep = safeNum(m.data.prep);
+    const solic = safeNum(m.data.solic);
+    const backoff = safeNum(m.data.backoff);
+    const sinventa = safeNum(m.data.sinventa);
+
+    const metaEl = document.getElementById(`meta_${i}`);
+    const ventasEl = document.getElementById(`ventas_${i}`);
+    const backFebEl = document.getElementById(`backFeb_${i}`);
+    const entregaEl = document.getElementById(`entrega_${i}`);
+    const prepEl = document.getElementById(`prep_${i}`);
+    const solicEl = document.getElementById(`solic_${i}`);
+    const backoffEl = document.getElementById(`backoff_${i}`);
+    const sinventaEl = document.getElementById(`sinventa_${i}`);
+
+    if (metaEl) metaEl.value = meta;
+    if (ventasEl) ventasEl.value = ventas;
+    if (backFebEl) backFebEl.value = backFeb;
+    if (entregaEl) entregaEl.value = entrega;
+    if (prepEl) prepEl.value = prep;
+    if (solicEl) solicEl.value = solic;
+    if (backoffEl) backoffEl.value = backoff;
+    if (sinventaEl) sinventaEl.value = sinventa;
 
     const faltan = meta - ventas;
     const conv = backFeb > 0 ? (ventas / backFeb) * 100 : 0;
@@ -624,46 +652,53 @@ function recalcAll() {
     setC(`diaria_${i}`, diaria.toFixed(1), diaria <= 8 ? 'g' : diaria <= 10 ? 'a' : 'r');
     setC(`metaDesde_${i}`, metaDesde.toFixed(1));
     setC(`transito_${i}`, transito);
-
-    // Sync back to data store
-    if (currentUser.role === 'sup') {
-      const agent = ORG.agents[currentUser.id][i];
-      if (agent) {
-        agent.meta = meta;
-        agent.data = { ventas, backFeb, entrega, prep, solic, backoff, sinventa };
-      }
-    } else {
-      const key = m.key;
-      if (ORG.supervisors[key]) ORG.supervisors[key].meta = meta;
-      if (ORG.supData[key]) ORG.supData[key] = { ventas, backFeb, entrega, prep, solic, backoff, sinventa };
-    }
   });
+
   updateTotals();
 }
 
-function setC(id, val, cls) {
-  const el = document.getElementById(id);
-  if (!el) return;
-  el.textContent = val;
-  el.className = 'cc' + (cls ? ' ' + cls : '');
-}
-
 function updateTotals() {
+  if (!currentUser) return;
+
   const members = getViewMembers();
-  const dias = gv('diasRestantes');
+  const dias = getSystemDias();
+
   let tM=0,tV=0,tB=0,tE=0,tP=0,tS=0,tBO=0,tSV=0;
-  members.forEach((m,i) => {
-    tM+=gv(`meta_${i}`);tV+=gv(`ventas_${i}`);tB+=gv(`backFeb_${i}`);
-    tE+=gv(`entrega_${i}`);tP+=gv(`prep_${i}`);tS+=gv(`solic_${i}`);tBO+=gv(`backoff_${i}`);tSV+=gv(`sinventa_${i}`);
+
+  members.forEach(m => {
+    tM += safeNum(m.meta);
+    tV += safeNum(m.data.ventas);
+    tB += safeNum(m.data.backFeb);
+    tE += safeNum(m.data.entrega);
+    tP += safeNum(m.data.prep);
+    tS += safeNum(m.data.solic);
+    tBO += safeNum(m.data.backoff);
+    tSV += safeNum(m.data.sinventa);
   });
-  const tF=tM-tV, tC=tB>0?(tV/tB)*100:0, tMB=tC>0?tF/(tC/100):0, tD=dias>0?tMB/dias:0, tT=tE+tP+tS+tBO+tSV, tMD=dias>0?tF/dias:0;
-  const isSup = currentUser.role === 'sup';
+
+  const tF = tM - tV;
+  const tC = tB > 0 ? (tV / tB) * 100 : 0;
+  const tMB = tC > 0 ? tF / (tC / 100) : 0;
+  const tD = dias > 0 ? tMB / dias : 0;
+  const tT = tE + tP + tS + tBO + tSV;
+  const tMD = dias > 0 ? tF / dias : 0;
+
   document.getElementById('inputFoot').innerHTML = `<tr>
     <td style="text-align:left;padding-left:14px">Total</td>
-    <td>${tM}</td><td>${tV}</td><td>${tB}</td><td>${tF}</td><td>${tC.toFixed(1)}%</td>
-    <td>${tMB.toFixed(1)}</td><td>${tD.toFixed(1)}</td><td>${tMD.toFixed(1)}</td>
-    <td class="col-div">${tE}</td><td>${tP}</td><td>${tS}</td><td>${tBO}</td><td>${tSV}</td><td>${tT}</td>
-    ${isSup?'<td></td>':''}
+    <td>${tM}</td>
+    <td>${tV}</td>
+    <td>${tB}</td>
+    <td>${tF}</td>
+    <td>${tC.toFixed(1)}%</td>
+    <td>${tMB.toFixed(1)}</td>
+    <td>${tD.toFixed(1)}</td>
+    <td>${tMD.toFixed(1)}</td>
+    <td class="col-div">${tE}</td>
+    <td>${tP}</td>
+    <td>${tS}</td>
+    <td>${tBO}</td>
+    <td>${tSV}</td>
+    <td>${tT}</td>
   </tr>`;
 }
 
@@ -673,9 +708,11 @@ function updateTotals() {
 function switchTab(tab) {
   document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
   document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+
   if (tab === 'input') {
     document.querySelectorAll('.tab')[0].classList.add('active');
     document.getElementById('panelInput').classList.add('active');
+    recalcAll();
   } else {
     document.querySelectorAll('.tab')[1].classList.add('active');
     document.getElementById('panelReport').classList.add('active');
@@ -684,70 +721,22 @@ function switchTab(tab) {
 }
 
 // ══════════════════════════════
-//  SAVE / LOAD
+//  COMPUTE REPORT
 // ══════════════════════════════
-function saveAllData() {
-  recalcAll();
-  const payload = {
-    user: currentUser,
-    diasRestantes: gv('diasRestantes'),
-    periodo: document.getElementById('periodoLabel').value,
-    supData: ORG.supData,
-    supMetas: {},
-    agents: ORG.agents
-  };
-  Object.keys(ORG.supervisors).forEach(k => payload.supMetas[k] = ORG.supervisors[k].meta);
-
-  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(blob);
-  a.download = `datos_${currentUser.id}_${new Date().toISOString().slice(0,10)}.json`;
-  a.click();
-  showToast('Datos guardados ✓');
-}
-
-function loadAllData() {
-  const input = document.createElement('input');
-  input.type = 'file'; input.accept = '.json';
-  input.onchange = e => {
-    const file = e.target.files[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = ev => {
-      try {
-        const d = JSON.parse(ev.target.result);
-        if (d.supData) Object.assign(ORG.supData, d.supData);
-        if (d.supMetas) Object.keys(d.supMetas).forEach(k => { if(ORG.supervisors[k]) ORG.supervisors[k].meta = d.supMetas[k]; });
-        if (d.agents) Object.assign(ORG.agents, d.agents);
-        if (d.diasRestantes) document.getElementById('diasRestantes').value = d.diasRestantes;
-        if (d.periodo) document.getElementById('periodoLabel').value = d.periodo;
-        buildInputTable();
-        updateAgentCount();
-        showToast('Datos cargados ✓');
-      } catch(e) { showToast('Error al cargar'); }
-    };
-    reader.readAsText(file);
-  };
-  input.click();
-}
-
-// ══════════════════════════════
-//  BUILD REPORT
-// ══════════════════════════════
-function destroyCharts() { chartInstances.forEach(c => c.destroy()); chartInstances = []; }
-
 function computeReport() {
   const members = getViewMembers();
-  const dias = gv('diasRestantes');
-  return members.map((m, i) => {
-    const meta = gv(`meta_${i}`);
-    const ventas = gv(`ventas_${i}`);
-    const backFeb = gv(`backFeb_${i}`);
-    const entrega = gv(`entrega_${i}`);
-    const prep = gv(`prep_${i}`);
-    const solic = gv(`solic_${i}`);
-    const backoff = gv(`backoff_${i}`);
-    const sinventa = gv(`sinventa_${i}`);
+  const dias = getSystemDias();
+
+  return members.map(m => {
+    const meta = safeNum(m.meta);
+    const ventas = safeNum(m.data.ventas);
+    const backFeb = safeNum(m.data.backFeb);
+    const entrega = safeNum(m.data.entrega);
+    const prep = safeNum(m.data.prep);
+    const solic = safeNum(m.data.solic);
+    const backoff = safeNum(m.data.backoff);
+    const sinventa = safeNum(m.data.sinventa);
+
     const faltan = meta - ventas;
     const conv = backFeb > 0 ? (ventas / backFeb) * 100 : 0;
     const metaBack = conv > 0 ? faltan / (conv / 100) : 0;
@@ -755,18 +744,31 @@ function computeReport() {
     const transito = entrega + prep + solic + backoff + sinventa;
     const metaDesde = dias > 0 ? faltan / dias : 0;
     const avance = meta > 0 ? (ventas / meta) * 100 : 0;
-    return { ...m, meta, ventas, backFeb, faltan, conv, metaBack, diaria, transito, metaDesde, avance, entrega, prep, solic, backoff, sinventa };
+
+    return {
+      ...m,
+      meta, ventas, backFeb, faltan, conv, metaBack, diaria, transito, metaDesde, avance,
+      entrega, prep, solic, backoff, sinventa
+    };
   });
 }
 
-/* ✅ UPDATED buildReport() ONLY (aesthetic + adaptive charts) */
+// ══════════════════════════════
+//  BUILD REPORT
+// ══════════════════════════════
 function buildReport() {
-  destroyCharts(); recalcAll();
-  const data = computeReport();
-  if (data.length === 0) { document.getElementById('reportPreview').innerHTML = '<p style="text-align:center;padding:40px;color:var(--text-dim)">Sin datos para mostrar</p>'; return; }
+  destroyCharts();
+  recalcAll();
 
-  const dias = gv('diasRestantes');
-  const periodo = document.getElementById('periodoLabel').value;
+  const data = computeReport();
+  if (data.length === 0) {
+    document.getElementById('reportPreview').innerHTML =
+      '<p style="text-align:center;padding:40px;color:var(--text-dim)">Sin datos para mostrar</p>';
+    return;
+  }
+
+  const dias = getSystemDias();
+  const periodo = getSystemPeriodo();
   const label = getLevelLabel();
   const { role, id } = currentUser;
 
@@ -789,12 +791,6 @@ function buildReport() {
   const tBO = data.reduce((s,d) => s+d.backoff,0);
   const tSV = data.reduce((s,d) => s+d.sinventa,0);
 
-  const bestI = data.reduce((b,d,i) => d.avance > data[b].avance ? i : b, 0);
-  const worstI = data.reduce((w,d,i) => d.avance < data[w].avance ? i : w, 0);
-  const lowConv = data.reduce((w,d,i) => d.conv < data[w].conv && d.backFeb > 0 ? i : w, 0);
-
-  const shorts = data.map(d => d.short);
-
   const preview = document.getElementById('reportPreview');
   preview.innerHTML = `
     <div class="report-container">
@@ -803,6 +799,7 @@ function buildReport() {
         <h2>Informe de Desempeño por ${label}</h2>
         <p>${periodo} · ExpertCell · Corte actualizado</p>
       </div>
+
       <div class="kpi-grid">
         <div class="kpi"><div class="kl">Ventas Totales</div><div class="kv" style="color:var(--green)">${tV}</div><div class="ks">${data.length} ${label.toLowerCase()}s</div></div>
         <div class="kpi"><div class="kl">Meta Global</div><div class="kv">${tM}</div><div class="ks">${tAv.toFixed(1)}% avance</div></div>
@@ -811,14 +808,17 @@ function buildReport() {
         <div class="kpi"><div class="kl">Meta Diaria Prog.</div><div class="kv" style="color:var(--amber)">${tD.toFixed(1)}</div><div class="ks">programadas/día</div></div>
         <div class="kpi"><div class="kl">Pipeline</div><div class="kv" style="color:var(--purple)">${tT}</div><div class="ks">en tránsito</div></div>
       </div>
+
       <div class="chart-grid">
         <div class="chart-card"><h3>Ventas vs Meta</h3><div class="chart-wrap" id="cwVM"></div></div>
         <div class="chart-card"><h3>% Avance hacia Meta</h3><div class="chart-wrap" id="cwAv"></div></div>
       </div>
+
       <div class="chart-grid">
         <div class="chart-card"><h3>Meta Diaria Programadas</h3><div class="chart-wrap" id="cwDi"></div></div>
         <div class="chart-card"><h3>% Conversión ${ORG.backLabel || 'Back Mes'}</h3><div class="chart-wrap" id="cwCo"></div></div>
       </div>
+
       <div class="chart-grid">
         <div class="chart-card full"><h3>Desglose Pipeline en Tránsito (${tT} totales)</h3>
           <div class="chart-wrap sh"><canvas id="rC5"></canvas></div>
@@ -844,16 +844,27 @@ function buildReport() {
           </table>
         </div>
       </div>
+
       <div style="height:12px"></div>
+
       <div class="section-title"><span class="dot"></span>Detalle por ${label}</div>
       <table class="detail-table">
         <thead><tr>
-          <th style="text-align:left;padding-left:14px">${label}</th><th>Ventas</th><th>Meta</th><th>Faltan</th>
-          <th>Avance</th><th>% Conv</th><th>Meta Back</th><th>Meta Diaria Prog.</th><th>Meta desde hoy (act.)</th><th>Estado</th>
+          <th style="text-align:left;padding-left:14px">${label}</th>
+          <th>Ventas</th>
+          <th>Meta</th>
+          <th>Faltan</th>
+          <th>Avance</th>
+          <th>% Conv</th>
+          <th>Meta Back</th>
+          <th>Meta Diaria Prog.</th>
+          <th>Meta desde hoy (act.)</th>
+          <th>Estado</th>
         </tr></thead>
         <tbody id="rTBody"></tbody>
         <tfoot id="rTFoot"></tfoot>
       </table>
+
       <div class="section-title"><span class="dot" style="background:var(--amber)"></span>Resumen Ejecutivo</div>
       <div class="insights-grid">
         <div class="insight-card" style="border-left:3px solid var(--accent)">
@@ -869,11 +880,11 @@ function buildReport() {
           <p>Conversión promedio del equipo: <strong>${tC.toFixed(1)}%</strong>. ${data.filter(d=>d.conv>=85).length} de ${data.length} ${label.toLowerCase()}s superan el 85%. Mejorar la conversión general en 2pts reduce la meta diaria programada significativamente.</p>
         </div>
       </div>
+
       <div class="report-footer"><p>ExpertCell · Distribuidor Autorizado AT&T · ${periodo} · ${titleName}</p></div>
     </div>
   `;
 
-  // Table
   const tbody = document.getElementById('rTBody');
   data.forEach(d => {
     const av = d.avance.toFixed(1);
@@ -881,25 +892,38 @@ function buildReport() {
     if (d.avance >= 60) { estado = 'En Ruta'; sCls = 'on-track'; }
     else if (d.avance >= 45) { estado = 'Atención'; sCls = 'at-risk'; }
     else { estado = 'Crítico'; sCls = 'behind'; }
+
     const cp = d.conv >= 85 ? 'green' : d.conv >= 80 ? 'amber' : 'red';
     const bc = d.avance >= 60 ? 'var(--green)' : d.avance >= 45 ? 'var(--amber)' : 'var(--red)';
+
     tbody.innerHTML += `<tr>
-      <td>${d.name}</td><td><strong>${d.ventas}</strong></td><td>${d.meta}</td>
+      <td>${d.name}</td>
+      <td><strong>${d.ventas}</strong></td>
+      <td>${d.meta}</td>
       <td style="color:var(--red)">${d.faltan}</td>
       <td><div class="bar-cell"><span style="font-size:10px;font-weight:600;min-width:32px">${av}%</span><div class="mini-bar-bg"><div class="mini-bar" style="width:${Math.min(av,100)}%;background:${bc}"></div></div></div></td>
       <td><span class="pill ${cp}">${d.conv.toFixed(1)}%</span></td>
-      <td>${d.metaBack.toFixed(1)}</td><td><strong>${d.diaria.toFixed(1)}</strong></td><td><strong>${d.metaDesde.toFixed(1)}</strong></td>
+      <td>${d.metaBack.toFixed(1)}</td>
+      <td><strong>${d.diaria.toFixed(1)}</strong></td>
+      <td><strong>${d.metaDesde.toFixed(1)}</strong></td>
       <td><span class="status-dot ${sCls}"></span>${estado}</td>
     </tr>`;
   });
+
   const tMDesde = dias > 0 ? tF / dias : 0;
   document.getElementById('rTFoot').innerHTML = `<tr>
     <td style="text-align:left;padding-left:14px">Total</td>
-    <td>${tV}</td><td>${tM}</td><td>${tF}</td><td>${tAv.toFixed(1)}%</td>
-    <td>${tC.toFixed(1)}%</td><td>${tMB.toFixed(1)}</td><td>${tD.toFixed(1)}</td><td>${tMDesde.toFixed(1)}</td><td></td>
+    <td>${tV}</td>
+    <td>${tM}</td>
+    <td>${tF}</td>
+    <td>${tAv.toFixed(1)}%</td>
+    <td>${tC.toFixed(1)}%</td>
+    <td>${tMB.toFixed(1)}</td>
+    <td>${tD.toFixed(1)}</td>
+    <td>${tMDesde.toFixed(1)}</td>
+    <td></td>
   </tr>`;
 
-  // Charts — adaptive layout
   Chart.register(ChartDataLabels);
   Chart.defaults.color = '#7A8599';
   Chart.defaults.borderColor = 'rgba(255,255,255,0.06)';
@@ -909,20 +933,18 @@ function buildReport() {
   const n = data.length;
   const isLarge = n > 8;
   const dlFs = isLarge ? 8 : 9;
-  const barH = isLarge ? Math.max(n * 28, 240) : 240; // dynamic height for horizontal charts
+  const barH = isLarge ? Math.max(n * 28, 240) : 240;
   const barHv = isLarge ? Math.max(n * 22, 240) : 240;
 
-  // Use first name only for labels when many members
   const chartLabels = data.map(d => {
     const parts = d.name.split(' ');
-    if (n > 14) return parts[0]; // just first name
-    if (n > 8) return parts.slice(0,2).join(' '); // first + second
+    if (n > 14) return parts[0];
+    if (n > 8) return parts.slice(0,2).join(' ');
     return d.short;
   });
 
   Chart.defaults.font.size = isLarge ? 8 : 10;
 
-  // Helper: create canvas inside container with dynamic height
   function makeCanvas(containerId, height) {
     const wrap = document.getElementById(containerId);
     wrap.style.height = height + 'px';
@@ -931,80 +953,101 @@ function buildReport() {
     return c;
   }
 
-  // 1. Ventas vs Meta — horizontal when many, vertical when few
   if (isLarge) {
     chartInstances.push(new Chart(makeCanvas('cwVM', barH), {
-      type:'bar', data:{labels:chartLabels,datasets:[
+      type:'bar',
+      data:{labels:chartLabels,datasets:[
         {label:'Ventas',data:data.map(d=>d.ventas),backgroundColor:'#00A8E0',borderRadius:4,barPercentage:.6,
           datalabels:{display:true,anchor:'end',align:'end',color:'#00A8E0',font:{size:dlFs,weight:'bold'}}},
         {label:'Meta',data:data.map(d=>d.meta),backgroundColor:'rgba(255,255,255,.08)',borderRadius:4,barPercentage:.6,
           datalabels:{display:true,anchor:'end',align:'end',color:'#556677',font:{size:dlFs-1}}}
-      ]}, options:{indexAxis:'y',responsive:true,maintainAspectRatio:false,
+      ]},
+      options:{indexAxis:'y',responsive:true,maintainAspectRatio:false,
         plugins:{legend:{position:'top',labels:{usePointStyle:true,pointStyle:'circle',padding:10,font:{size:8}}}},
         scales:{x:{beginAtZero:true,grid:{color:'rgba(255,255,255,.04)'}},y:{grid:{display:false}}}}
     }));
   } else {
     chartInstances.push(new Chart(makeCanvas('cwVM', 240), {
-      type:'bar', data:{labels:chartLabels,datasets:[
+      type:'bar',
+      data:{labels:chartLabels,datasets:[
         {label:'Ventas',data:data.map(d=>d.ventas),backgroundColor:'#00A8E0',borderRadius:5,barPercentage:.5,
           datalabels:{display:true,anchor:'end',align:'end',color:'#00A8E0',font:{size:dlFs,weight:'bold'}}},
-        {label:'Meta',data:data.map(d=>d.meta),backgroundColor:'rgba(255,255,255,.08)',borderRadius:5,barPercentage:.5,
-          datalabels:{display:false}}
-      ]}, options:{responsive:true,maintainAspectRatio:false,
+        {label:'Meta',data:data.map(d=>d.meta),backgroundColor:'rgba(255,255,255,.08)',borderRadius:5,barPercentage:.5,datalabels:{display:false}}
+      ]},
+      options:{responsive:true,maintainAspectRatio:false,
         plugins:{legend:{position:'top',labels:{usePointStyle:true,pointStyle:'circle',padding:12,font:{size:9}}}},
         scales:{y:{beginAtZero:true,grid:{color:'rgba(255,255,255,.04)'}},x:{grid:{display:false}}}}
     }));
   }
 
-  // 2. % Avance — always horizontal
   chartInstances.push(new Chart(makeCanvas('cwAv', barH), {
-    type:'bar', data:{labels:chartLabels,datasets:[{data:data.map(d=>+d.avance.toFixed(1)),
-      backgroundColor:data.map(d=>d.avance>=60?'#22C55E':d.avance>=45?'#FF7200':'#EF4444'),borderRadius:4,barPercentage:.6,
-      datalabels:{display:true,anchor:'end',align:'end',font:{size:dlFs,weight:'bold'},
+    type:'bar',
+    data:{labels:chartLabels,datasets:[{
+      data:data.map(d=>+d.avance.toFixed(1)),
+      backgroundColor:data.map(d=>d.avance>=60?'#22C55E':d.avance>=45?'#FF7200':'#EF4444'),
+      borderRadius:4,barPercentage:.6,
+      datalabels:{
+        display:true,anchor:'end',align:'end',font:{size:dlFs,weight:'bold'},
         color:function(ctx){const v=ctx.dataset.data[ctx.dataIndex];return v>=60?'#22C55E':v>=45?'#FF7200':'#EF4444'},
-        formatter:function(v){return v+'%'}}}]},
+        formatter:function(v){return v+'%'}
+      }
+    }]},
     options:{indexAxis:'y',responsive:true,maintainAspectRatio:false,
       plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>c.parsed.x+'%'}}},
       scales:{x:{beginAtZero:true,max:100,grid:{color:'rgba(255,255,255,.04)'},ticks:{callback:v=>v+'%'}},y:{grid:{display:false}}}}
   }));
 
-  // 3. Meta Diaria — horizontal when many
   if (isLarge) {
     chartInstances.push(new Chart(makeCanvas('cwDi', barHv), {
-      type:'bar', data:{labels:chartLabels,datasets:[{data:data.map(d=>+d.diaria.toFixed(1)),
-        backgroundColor:data.map(d=>d.diaria<=8?'#22C55E':d.diaria<=10?'#FF7200':'#EF4444'),borderRadius:4,barPercentage:.6,
-        datalabels:{display:true,anchor:'end',align:'end',font:{size:dlFs,weight:'bold'},
-          color:function(ctx){const v=ctx.dataset.data[ctx.dataIndex];return v<=8?'#22C55E':v<=10?'#FF7200':'#EF4444'}}}]},
+      type:'bar',
+      data:{labels:chartLabels,datasets:[{
+        data:data.map(d=>+d.diaria.toFixed(1)),
+        backgroundColor:data.map(d=>d.diaria<=8?'#22C55E':d.diaria<=10?'#FF7200':'#EF4444'),
+        borderRadius:4,barPercentage:.6,
+        datalabels:{
+          display:true,anchor:'end',align:'end',font:{size:dlFs,weight:'bold'},
+          color:function(ctx){const v=ctx.dataset.data[ctx.dataIndex];return v<=8?'#22C55E':v<=10?'#FF7200':'#EF4444'}
+        }
+      }]},
       options:{indexAxis:'y',responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},
         scales:{x:{beginAtZero:true,grid:{color:'rgba(255,255,255,.04)'}},y:{grid:{display:false}}}}
     }));
   } else {
     chartInstances.push(new Chart(makeCanvas('cwDi', 200), {
-      type:'bar', data:{labels:chartLabels,datasets:[{data:data.map(d=>+d.diaria.toFixed(1)),
-        backgroundColor:data.map(d=>d.diaria<=8?'#22C55E':d.diaria<=10?'#FF7200':'#EF4444'),borderRadius:5,barPercentage:.55,
-        datalabels:{display:true,anchor:'end',align:'end',font:{size:dlFs,weight:'bold'},
-          color:function(ctx){const v=ctx.dataset.data[ctx.dataIndex];return v<=8?'#22C55E':v<=10?'#FF7200':'#EF4444'}}}]},
+      type:'bar',
+      data:{labels:chartLabels,datasets:[{
+        data:data.map(d=>+d.diaria.toFixed(1)),
+        backgroundColor:data.map(d=>d.diaria<=8?'#22C55E':d.diaria<=10?'#FF7200':'#EF4444'),
+        borderRadius:5,barPercentage:.55,
+        datalabels:{
+          display:true,anchor:'end',align:'end',font:{size:dlFs,weight:'bold'},
+          color:function(ctx){const v=ctx.dataset.data[ctx.dataIndex];return v<=8?'#22C55E':v<=10?'#FF7200':'#EF4444'}
+        }
+      }]},
       options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},
         scales:{y:{beginAtZero:true,grid:{color:'rgba(255,255,255,.04)'}},x:{grid:{display:false}}}}
     }));
   }
 
-  // 4. % Conversión — always horizontal
   chartInstances.push(new Chart(makeCanvas('cwCo', barH), {
-    type:'bar', data:{labels:chartLabels,datasets:[{data:data.map(d=>+d.conv.toFixed(1)),
-      backgroundColor:data.map(d=>d.conv>=85?'#22C55E':d.conv>=80?'#FF7200':'#EF4444'),borderRadius:4,barPercentage:.6,
-      datalabels:{display:true,anchor:'end',align:'end',font:{size:dlFs,weight:'bold'},
+    type:'bar',
+    data:{labels:chartLabels,datasets:[{
+      data:data.map(d=>+d.conv.toFixed(1)),
+      backgroundColor:data.map(d=>d.conv>=85?'#22C55E':d.conv>=80?'#FF7200':'#EF4444'),
+      borderRadius:4,barPercentage:.6,
+      datalabels:{
+        display:true,anchor:'end',align:'end',font:{size:dlFs,weight:'bold'},
         color:function(ctx){const v=ctx.dataset.data[ctx.dataIndex];return v>=85?'#22C55E':v>=80?'#FF7200':'#EF4444'},
-        formatter:function(v){return v+'%'}}}]},
+        formatter:function(v){return v+'%'}
+      }
+    }]},
     options:{indexAxis:'y',responsive:true,maintainAspectRatio:false,
       plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>c.parsed.x+'%'}}},
       scales:{x:{beginAtZero:true,max:100,grid:{color:'rgba(255,255,255,.04)'},ticks:{callback:v=>v+'%'}},y:{grid:{display:false}}}}
   }));
 
-  // Pipeline stacked — clean bars, total on top, detail in table
   const pipeNoDl = {display:false};
   const pipeTotals = data.map(d=>d.transito);
-  // Remove fixed canvas and create dynamic one
   const pipeWrap = document.getElementById('rC5').parentElement;
   pipeWrap.removeChild(document.getElementById('rC5'));
   const pipeH = isLarge ? Math.max(n * 20, 200) : 200;
@@ -1013,7 +1056,8 @@ function buildReport() {
   pipeWrap.appendChild(pipeCanvas);
 
   chartInstances.push(new Chart(pipeCanvas, {
-    type:'bar', data:{labels:chartLabels,datasets:[
+    type:'bar',
+    data:{labels:chartLabels,datasets:[
       {label:'En Entrega',data:data.map(d=>d.entrega),backgroundColor:'#067AB4',borderRadius:0,datalabels:pipeNoDl},
       {label:'En Preparación',data:data.map(d=>d.prep),backgroundColor:'#3AA5DC',borderRadius:0,datalabels:pipeNoDl},
       {label:'Solicitado',data:data.map(d=>d.solic),backgroundColor:'#FCB314',borderRadius:0,datalabels:pipeNoDl},
@@ -1021,7 +1065,8 @@ function buildReport() {
       {label:'Entreg. s/v',data:data.map(d=>d.sinventa),backgroundColor:'rgba(239,68,68,.8)',borderRadius:{topLeft:3,topRight:3},
         datalabels:{display:true,anchor:'end',align:'end',color:'#fff',font:{size:dlFs,weight:'bold'},
           formatter:function(v,ctx){return pipeTotals[ctx.dataIndex]}}}
-    ]}, options:{indexAxis: isLarge ? 'y' : 'x', responsive:true,maintainAspectRatio:false,
+    ]},
+    options:{indexAxis: isLarge ? 'y' : 'x', responsive:true,maintainAspectRatio:false,
       plugins:{legend:{position:'top',labels:{usePointStyle:true,pointStyle:'circle',padding:10,font:{size:8}}},
         tooltip:{callbacks:{afterBody:c=>'Total: '+data[c[0].dataIndex].transito}}},
       scales:{x:{stacked:true,grid:{display: isLarge ? true : false, color:'rgba(255,255,255,.04)'}},
@@ -1035,11 +1080,13 @@ function buildReport() {
 async function downloadPDF() {
   const wasInput = document.getElementById('panelInput').classList.contains('active');
   switchTab('report');
+
   document.getElementById('loadingOverlay').classList.add('show');
   await new Promise(r => setTimeout(r, 1500));
-  // Force chart animations to complete
+
   chartInstances.forEach(c => { c.options.animation = false; c.update('none'); });
   await new Promise(r => setTimeout(r, 500));
+
   try {
     const el = document.getElementById('reportPreview');
     const canvas = await html2canvas(el, { backgroundColor:'#0B0F1A', scale:2, useCORS:true, logging:false });
@@ -1050,22 +1097,22 @@ async function downloadPDF() {
     const sH = (canvas.height / canvas.width) * sW;
     const pages = Math.ceil(sH / pH);
     const pdf = new jsPDF('p','mm','a4');
+
     for (let p = 0; p < pages; p++) {
       if (p > 0) pdf.addPage();
       pdf.addImage(imgData, 'PNG', 0, -(p * pH), sW, sH);
     }
+
     const fecha = new Date().toISOString().slice(0,10);
     pdf.save(`informe_${currentUser.id}_${fecha}.pdf`);
     showToast('PDF descargado ✓');
-  } catch(err) { console.error(err); showToast('Error al generar PDF'); }
+  } catch(err) {
+    console.error(err);
+    showToast('Error al generar PDF');
+  }
+
   document.getElementById('loadingOverlay').classList.remove('show');
   if (wasInput) switchTab('input');
-}
-
-function showToast(msg) {
-  const t = document.getElementById('toast');
-  t.textContent = msg; t.classList.add('show');
-  setTimeout(() => t.classList.remove('show'), 2500);
 }
 
 // ══════════════════════════════════════════════
@@ -1074,56 +1121,68 @@ function showToast(msg) {
 const INJECTED_DATA = /*PYTHON_INJECTS_JSON_HERE*/ null;
 
 if (INJECTED_DATA) {
-
   if (INJECTED_DATA.backLabel) {
     ORG.backLabel = INJECTED_DATA.backLabel;
   }
-  // 1. Override the hardcoded ORG data with the live Python data
+
   if (INJECTED_DATA.supData) {
-      Object.assign(ORG.supData, INJECTED_DATA.supData);
+    Object.keys(INJECTED_DATA.supData).forEach(k => {
+      const v = INJECTED_DATA.supData[k] || {};
+      ORG.supData[k] = {
+        ventas: safeNum(v.ventas),
+        backFeb: safeNum(v.backFeb),
+        entrega: safeNum(v.entrega),
+        prep: safeNum(v.prep),
+        solic: safeNum(v.solic),
+        backoff: safeNum(v.backoff),
+        sinventa: safeNum(v.sinventa)
+      };
+    });
   }
 
-    // ✅ Update supervisor metas (for coord/mgr views)
   if (INJECTED_DATA.supMetas) {
     for (const [supId, meta] of Object.entries(INJECTED_DATA.supMetas)) {
       if (ORG.supervisors[supId]) {
-        ORG.supervisors[supId].meta = parseInt(meta) || 0;
+        ORG.supervisors[supId].meta = safeNum(meta);
       }
     }
   }
-  
+
   if (INJECTED_DATA.agents) {
-      // Permitir que la info de Back Feb que se edite a mano se mantenga si Streamlit manda 0
-      for (const [supId, agents] of Object.entries(INJECTED_DATA.agents)) {
-          if (ORG.agents[supId] && ORG.agents[supId].length > 0) {
-              agents.forEach((agent, i) => {
-                  if (ORG.agents[supId][i] && ORG.agents[supId][i].data && agent.data.backFeb === 0) {
-                      agent.data.backFeb = ORG.agents[supId][i].data.backFeb || 0;
-                  }
-              });
-          }
-      }
-      Object.assign(ORG.agents, INJECTED_DATA.agents);
+    Object.keys(INJECTED_DATA.agents).forEach(supId => {
+      const agents = Array.isArray(INJECTED_DATA.agents[supId]) ? INJECTED_DATA.agents[supId] : [];
+      ORG.agents[supId] = agents.map(a => ({
+        name: a.name || a.nombre || '',
+        meta: safeNum(a.meta),
+        data: {
+          ventas: safeNum(a?.data?.ventas),
+          backFeb: safeNum(a?.data?.backFeb),
+          entrega: safeNum(a?.data?.entrega),
+          prep: safeNum(a?.data?.prep),
+          solic: safeNum(a?.data?.solic),
+          backoff: safeNum(a?.data?.backoff),
+          sinventa: safeNum(a?.data?.sinventa)
+        }
+      }));
+    });
   }
 
-  // 2. Actualizar parámetros dinámicos de Python (Días y Periodo)
   if (INJECTED_DATA.diasRestantes !== undefined) {
-      const diasInput = document.getElementById('diasRestantes');
-      if(diasInput) diasInput.value = INJECTED_DATA.diasRestantes;
-  }
-  if (INJECTED_DATA.periodo) {
-      const periodoInput = document.getElementById('periodoLabel');
-      if(periodoInput) periodoInput.value = INJECTED_DATA.periodo;
+    SYSTEM_STATE.diasRestantes = safeNum(INJECTED_DATA.diasRestantes);
   }
 
+  if (INJECTED_DATA.periodo) {
+    SYSTEM_STATE.periodo = String(INJECTED_DATA.periodo);
+  }
+
+  syncSystemInputs();
   console.log("Datos inyectados exitosamente por Streamlit");
 
-  // 3. Re-renderizar todo si hay un usuario logueado en la ventana
   if (currentUser && typeof buildInputTable === 'function') {
-      buildInputTable();
-      if (document.getElementById('panelReport').classList.contains('active')) {
-          buildReport();
-      }
+    buildInputTable();
+    if (document.getElementById('panelReport').classList.contains('active')) {
+      buildReport();
+    }
   }
 }
 </script>
