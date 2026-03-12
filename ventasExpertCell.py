@@ -401,7 +401,8 @@ def _get_conn():
         f"DATABASE={cfg['database']};"
         f"UID={cfg['username']};"
         f"PWD={cfg['password']};"
-        "TrustServerCertificate=yes;"
+        f"TrustServerCertificate=yes;"
+        f"Mars_Connection=yes;"
     )
     return pyodbc.connect(conn_str, autocommit=True)
 
