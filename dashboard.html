@@ -428,6 +428,29 @@ function safeNum(v) {
   return Number.isFinite(n) ? n : 0;
 }
 
+function pickNum(obj, keys) {
+  if (!obj || typeof obj !== 'object') return 0;
+  for (const key of keys) {
+    if (obj[key] !== undefined && obj[key] !== null && obj[key] !== '') {
+      return safeNum(obj[key]);
+    }
+  }
+  return 0;
+}
+
+function normalizeDailyData(raw) {
+  const r = raw || {};
+  return {
+    ventas:   pickNum(r, ['ventas', 'venta']),
+    backFeb:  pickNum(r, ['backFeb', 'back_mes', 'backMes', 'back', 'back_feb']),
+    entrega:  pickNum(r, ['entrega', 'enEntrega', 'en_entrega']),
+    prep:     pickNum(r, ['prep', 'preparacion', 'preparación', 'enPreparacion', 'en_preparacion']),
+    solic:    pickNum(r, ['solic', 'solicitado', 'solicitados']),
+    backoff:  pickNum(r, ['backoff', 'back_off', 'backOffice', 'back_office', 'backoffice']),
+    sinventa: pickNum(r, ['sinventa', 'sin_venta', 'sinVenta', 'entrega_sin_venta', 'entregaSinVenta', 'entregados_sin_venta', 'entregadosSinVenta', 'sv'])
+  };
+}
+
 function getLevelLabel() {
   return currentUser.role === 'sup' ? 'Agente' : 'Supervisor';
 }
@@ -441,15 +464,7 @@ function getViewMembers() {
       name: a.name || '',
       short: (a.name || '').split(' ')[0] || '',
       meta: safeNum(a.meta),
-      data: {
-        ventas: safeNum(a?.data?.ventas),
-        backFeb: safeNum(a?.data?.backFeb),
-        entrega: safeNum(a?.data?.entrega),
-        prep: safeNum(a?.data?.prep),
-        solic: safeNum(a?.data?.solic),
-        backoff: safeNum(a?.data?.backoff),
-        sinventa: safeNum(a?.data?.sinventa),
-      }
+      data: normalizeDailyData(a?.data || a)
     }));
   }
 
@@ -465,15 +480,7 @@ function getViewMembers() {
       name: s.name,
       short: s.short,
       meta: safeNum(s.meta),
-      data: {
-        ventas: safeNum(d.ventas),
-        backFeb: safeNum(d.backFeb),
-        entrega: safeNum(d.entrega),
-        prep: safeNum(d.prep),
-        solic: safeNum(d.solic),
-        backoff: safeNum(d.backoff),
-        sinventa: safeNum(d.sinventa),
-      }
+      data: normalizeDailyData(d)
     };
   });
 }
@@ -1129,16 +1136,7 @@ function applyInjectedData(data) {
 
   if (data.supData) {
     Object.keys(data.supData).forEach(k => {
-      const v = data.supData[k] || {};
-      ORG.supData[k] = {
-        ventas: safeNum(v.ventas),
-        backFeb: safeNum(v.backFeb),
-        entrega: safeNum(v.entrega),
-        prep: safeNum(v.prep),
-        solic: safeNum(v.solic),
-        backoff: safeNum(v.backoff),
-        sinventa: safeNum(v.sinventa)
-      };
+      ORG.supData[k] = normalizeDailyData(data.supData[k]);
     });
   }
 
@@ -1156,15 +1154,7 @@ function applyInjectedData(data) {
       ORG.agents[supId] = agents.map(a => ({
         name: a.name || a.nombre || '',
         meta: safeNum(a.meta),
-        data: {
-          ventas: safeNum(a?.data?.ventas),
-          backFeb: safeNum(a?.data?.backFeb),
-          entrega: safeNum(a?.data?.entrega),
-          prep: safeNum(a?.data?.prep),
-          solic: safeNum(a?.data?.solic),
-          backoff: safeNum(a?.data?.backoff),
-          sinventa: safeNum(a?.data?.sinventa)
-        }
+        data: normalizeDailyData(a?.data || a)
       }));
     });
   }
