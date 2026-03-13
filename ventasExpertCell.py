@@ -4366,7 +4366,6 @@ with tabs[9]:
     m_start, m_end_full = month_bounds(mes_sel_int)
     today_dt = date.today()
     
-    # If the month is currently running, cut at today. If it passed, take the full month.
     if m_start <= today_dt <= m_end_full:
         m_end = today_dt
     elif today_dt < m_start:
@@ -4377,90 +4376,206 @@ with tabs[9]:
     interval_start = m_start
     interval_end = m_end
 
-    # ---------------------------------------------------------
-    # ⚡ CALCULATE HTML DATA USING INSTANT CACHED MEMORY
-    # ---------------------------------------------------------
-    pipeline_dict = {}
-    total_back_dict = {}
-    
-    # Use global end_dt for fetching so we don't accidentally trim the query too early
-    prog_history = fetch_programacion_history(end_dt)
-    
-    if not prog_history.empty:
-        df_html = prog_history.copy()
-        
-        # 1. Pipeline calculation (Filtered by the computed MONTH interval)
-        mask_pipeline = (df_html["Fecha_Creacion_DT"] >= interval_start) & (df_html["Fecha_Creacion_DT"] <= interval_end)
-        df_pipeline = df_html[mask_pipeline].copy()
-        
-        condlist = [
-            df_pipeline["Estatus_upper"].eq("EN ENTREGA"),
-            df_pipeline["Estatus_upper"].isin(["EN PREPARACION", "EN PREPARACIÓN"]),
-            df_pipeline["Estatus_upper"].eq("SOLICITADO"),
-            df_pipeline["Estatus_upper"].isin(["BACK OFFICE", "BACKOFFICE"]),
-            (df_pipeline["Estatus_upper"] == "ENTREGADO") & df_pipeline["Venta_Vacia"],
-        ]
-        choicelist = ["entrega", "prep", "solic", "backoff", "sinventa"]
-
-        df_pipeline["HTML_Cat"] = np.select(condlist, choicelist, default=None)
-        pipeline_df = df_pipeline.dropna(subset=["HTML_Cat"])
-        
-        if not pipeline_df.empty:
-            pipeline_dict = pipeline_df.groupby(["EJ_NORM", "HTML_Cat"]).size().unstack(fill_value=0).to_dict('index')
-            
-        # 2. ✅ FIXED: True Back Office Calculation (Matches Transito EXACTLY)
-        # CRITICAL: We pass the broad global start_dt/end_dt to the parser so it doesn't 
-        # force ambiguous dates (like 03/02/2026) into March incorrectly.
-        bo_dt = choose_backoffice_dt_html(df_html, window_start=start_dt, window_end=end_dt)
-
-        df_html["BO_DT"] = bo_dt
-        df_html["BO_Fecha"] = df_html["BO_DT"].dt.date
-
-        # Then we filter the results by the dynamic month interval
-        mask_bo = (
-            (df_html["Estatus_upper"] != "CANC ERROR") &
-            (df_html["BO_DT"].notna()) &
-            (df_html["BO_Fecha"] >= interval_start) &
-            (df_html["BO_Fecha"] <= interval_end)
-        )
-
-        backoffice_df = df_html.loc[mask_bo].copy()
-
-        if not backoffice_df.empty:
-            total_back_dict = backoffice_df.groupby("EJ_NORM").size().to_dict()
-
-    # 1B. TRUE VENTAS (From df_base strictly filtered to the month)
-    ventas_reales_dict = {}
-    if not df_base.empty:
-        ventas_reales_dict = df_base.groupby("EJECUTIVO_norm").size().to_dict()
-
     # 2. Get dynamic strings for the period display
     current_period = mes_labels.get(mes_sel, str(mes_sel)).title()
-    dias_restantes_int = int(round(dias_hab_restantes)) if 'dias_hab_restantes' in locals() else 8
+    dias_restantes_val = float(dias_hab_restantes) if "dias_hab_restantes" in locals() else 0.0
     
     if interval_start == interval_end:
         back_label = f"BACK {interval_start.strftime('%d/%m/%Y')}"
     else:
         back_label = f"BACK {interval_start.strftime('%d/%m/%Y')} → {interval_end.strftime('%d/%m/%Y')}"
-    
-    # 3. Map your SQL normalized supervisor names to the HTML short IDs
+
+    # 3. Map SQL supervisor names -> HTML IDs
     sup_map = {
         normalize_name("REYNA LIZZETTE MARTINEZ GARCIA"): "reyna",
         normalize_name("ALAN UZIEL SALAZAR AGUILAR"): "alan",
         normalize_name("CARLOS ALBERTO AGUILAR CANO"): "carlos",
         normalize_name("ALFREDO CABRERA PADRON"): "alfredo",
         normalize_name("JORGE MIGUEL UREÑA ZARATE"): "jorge",
-        normalize_name("MARIA FERNANDA MARTINEZ BISTRAIN"): "maria"
+        normalize_name("MARIA FERNANDA MARTINEZ BISTRAIN"): "maria",
     }
+    valid_sup_norms = set(sup_map.keys())
 
-    # 4. Initialize Single JSON Payload
+    # ---------------------------------------------------------
+    # ✅ HELPERS
+    # ---------------------------------------------------------
+    _HTML_STOPWORDS = {"DE", "DEL", "LA", "LAS", "LOS", "Y", "DA", "DO"}
+
+    def _html_tokens(s: str) -> set[str]:
+        n = normalize_name(s)
+        return {t for t in n.split() if t and t not in _HTML_STOPWORDS}
+
+    def _resolve_sup_from_name(
+        ej_norm: str,
+        candidate_name: str,
+        exact_sup_map: dict,
+        fallback_sales_sup: dict,
+        fallback_detalle_sup: dict,
+        roster_records: list[dict],
+    ):
+        # 1) exact by normalized employee name
+        if ej_norm in exact_sup_map and exact_sup_map[ej_norm] in valid_sup_norms:
+            return exact_sup_map[ej_norm]
+
+        # 2) fallback from ventas / detalle
+        sup_norm = fallback_sales_sup.get(ej_norm) or fallback_detalle_sup.get(ej_norm)
+        if sup_norm in valid_sup_norms:
+            return sup_norm
+
+        # 3) fuzzy by tokens against employee roster
+        cand = str(candidate_name or "").strip()
+        toks = _html_tokens(cand)
+        if toks:
+            best = None
+            best_inter = 0
+            best_score = 0.0
+
+            for rec in roster_records:
+                inter = len(toks & rec["tokens"])
+                if inter == 0:
+                    continue
+                score = inter / max(len(toks), len(rec["tokens"]), 1)
+                if (inter > best_inter) or (inter == best_inter and score > best_score):
+                    best = rec
+                    best_inter = inter
+                    best_score = score
+
+            if best and (best_score >= 0.70 or best_inter >= 3):
+                return best["sup_norm"]
+
+        return None
+
+    # ---------------------------------------------------------
+    # ✅ BUILD EMPLOYEE LOOKUP (same spirit as tránsito dashboard)
+    #     Row-level supervisor assignment comes from employees,
+    #     not from later post-hoc reconstruction.
+    # ---------------------------------------------------------
+    emp_html = empleados.copy()
+
+    emp_html["Nombre"] = emp_html["Nombre"].astype(str).str.strip()
+    emp_html["Jefe Inmediato"] = emp_html["Jefe Inmediato"].astype(str).str.strip()
+    emp_html["Puesto"] = emp_html["Puesto"].astype(str).str.strip().str.upper()
+    emp_html["Estatus"] = emp_html["Estatus"].astype(str).str.strip().str.upper()
+
+    # Keep only non-supervisory sales/advisor-like rows
+    emp_html = emp_html[
+        (~emp_html["Puesto"].str.contains("SUPERV", na=False))
+        & (~emp_html["Puesto"].str.contains("COORD", na=False))
+        & (~emp_html["Puesto"].str.contains("GEREN", na=False))
+        & (~emp_html["Puesto"].str.contains("JEFE", na=False))
+    ].copy()
+
+    emp_html["Nombre"] = emp_html["Nombre"].replace(
+        {
+            "CESAR JAHACIEL ALONSO GARCIAA": "CESAR JAHACIEL ALONSO GARCIA",
+            "VICTOR BETANZO FUENTES": "VICTOR BETANZOS FUENTES",
+        }
+    )
+
+    emp_html["EJ_NORM"] = emp_html["Nombre"].apply(normalize_name)
+    emp_html["SUP_NORM"] = emp_html["Jefe Inmediato"].apply(normalize_name)
+
+    # Prefer ACTIVO if duplicates exist
+    emp_html["_ACTIVO_RANK"] = (emp_html["Estatus"] == "ACTIVO").astype(int)
+    if "Fecha Ingreso" in emp_html.columns:
+        emp_html["_ING_DT"] = pd.to_datetime(emp_html["Fecha Ingreso"], errors="coerce")
+    else:
+        emp_html["_ING_DT"] = pd.NaT
+
+    emp_html = emp_html.sort_values(
+        ["_ACTIVO_RANK", "_ING_DT", "Nombre"],
+        ascending=[False, False, True],
+    ).drop_duplicates(subset=["EJ_NORM"], keep="first")
+
+    emp_html = emp_html[emp_html["SUP_NORM"].isin(valid_sup_norms)].copy()
+
+    emp_exact_sup_map = emp_html.set_index("EJ_NORM")["SUP_NORM"].to_dict()
+    emp_exact_name_map = emp_html.set_index("EJ_NORM")["Nombre"].to_dict()
+
+    emp_roster_records = []
+    for _, r in emp_html.iterrows():
+        emp_roster_records.append(
+            {
+                "ej_norm": r["EJ_NORM"],
+                "sup_norm": r["SUP_NORM"],
+                "name": str(r["Nombre"]).strip(),
+                "tokens": _html_tokens(str(r["Nombre"]).strip()),
+            }
+        )
+
+    # ---------------------------------------------------------
+    # ✅ FALLBACK MAPS FROM REAL SALES / DETALLE
+    # ---------------------------------------------------------
+    last_sup_by_ej = {}
+    last_name_by_ej = {}
+
+    if not df_base.empty:
+        ventas_team = df_base.copy()
+        ventas_team["EJECUTIVO"] = ventas_team["EJECUTIVO"].astype(str).str.strip()
+        ventas_team["Supervisor"] = ventas_team["Supervisor"].astype(str).str.strip()
+        ventas_team["EJECUTIVO_norm"] = ventas_team["EJECUTIVO"].apply(normalize_name)
+        ventas_team["Supervisor_norm"] = ventas_team["Supervisor"].apply(normalize_name)
+
+        ventas_team = ventas_team[ventas_team["Supervisor_norm"].isin(valid_sup_norms)].copy()
+
+        if not ventas_team.empty:
+            ventas_team["FECHA_DE_CAPTURA_SORT"] = pd.to_datetime(ventas_team["FECHA DE CAPTURA"], errors="coerce")
+            ventas_team = ventas_team.sort_values(["FECHA_DE_CAPTURA_SORT", "EJECUTIVO"], ascending=[True, True])
+
+            last_rows = ventas_team.drop_duplicates(subset=["EJECUTIVO_norm"], keep="last").copy()
+            last_sup_by_ej = last_rows.set_index("EJECUTIVO_norm")["Supervisor_norm"].to_dict()
+            last_name_by_ej = last_rows.set_index("EJECUTIVO_norm")["EJECUTIVO"].to_dict()
+
+    sup_from_detalle = {}
+    name_from_detalle = {}
+    meta_from_detalle = {}
+
+    if "df_detalle_full" in locals() and not df_detalle_full.empty:
+        det_tmp = df_detalle_full.copy()
+        det_tmp["Ejecutivo"] = det_tmp["Ejecutivo"].astype(str).str.strip()
+        det_tmp["Supervisor"] = det_tmp["Supervisor"].astype(str).str.strip()
+
+        det_tmp = det_tmp[
+            (det_tmp["Ejecutivo"].str.upper() != "TOTAL")
+            & (det_tmp["Supervisor"].str.upper() != "TOTAL")
+        ].copy()
+
+        det_tmp["EJ_NORM"] = det_tmp["Ejecutivo"].apply(normalize_name)
+        det_tmp["SUP_NORM"] = det_tmp["Supervisor"].apply(normalize_name)
+        det_tmp = det_tmp[det_tmp["SUP_NORM"].isin(valid_sup_norms)].copy()
+
+        if "Ventas" in det_tmp.columns:
+            det_tmp["Ventas"] = pd.to_numeric(det_tmp["Ventas"], errors="coerce").fillna(0)
+            det_tmp = det_tmp.sort_values(["Ventas", "Ejecutivo"], ascending=[False, True])
+        else:
+            det_tmp = det_tmp.sort_values(["Ejecutivo"])
+
+        det_tmp = det_tmp.drop_duplicates(subset=["EJ_NORM"], keep="first").copy()
+        sup_from_detalle = det_tmp.set_index("EJ_NORM")["SUP_NORM"].to_dict()
+        name_from_detalle = det_tmp.set_index("EJ_NORM")["Ejecutivo"].to_dict()
+
+        if "Meta" in det_tmp.columns:
+            meta_from_detalle = (
+                pd.to_numeric(det_tmp["Meta"], errors="coerce")
+                .fillna(0)
+                .groupby(det_tmp["EJ_NORM"])
+                .first()
+                .to_dict()
+            )
+
+    # ---------------------------------------------------------
+    # ✅ LOAD PROGRAMACION BASE
+    # ---------------------------------------------------------
+    prog_history = fetch_programacion_history(end_dt)
+
+    # base payload
     live_data_payload = {
-        "diasRestantes": dias_restantes_int,
+        "diasRestantes": dias_restantes_val,
         "periodo": current_period,
         "backLabel": back_label,
-        "supData": {k: {"ventas":0, "backFeb":0, "entrega":0, "prep":0, "solic":0, "backoff":0, "sinventa":0} for k in sup_map.values()},
+        "supData": {k: {"ventas": 0, "backFeb": 0, "entrega": 0, "prep": 0, "solic": 0, "backoff": 0, "sinventa": 0} for k in sup_map.values()},
         "agents": {k: [] for k in sup_map.values()},
-        "supMetas": {} 
+        "supMetas": {},
     }
 
     metas_map_html = load_metas_from_csv(int(mes_sel))
@@ -4474,118 +4589,238 @@ with tabs[9]:
             live_data_payload["supMetas"][sup_id] = 0
 
     # ---------------------------------------------------------
-    # 5A-0) Build "last supervisor in current month sales"
-    #       from REAL ventas (needed for bajas with ventas)
+    # ✅ TRUE SALES (from ventas dashboard month selection)
     # ---------------------------------------------------------
-    # ✅ FIX: Initialized securely at the root so it NEVER triggers a NameError
-    last_sup_by_ej = {}
-    last_name_by_ej = {}
-
+    ventas_agents_df = pd.DataFrame(columns=["EJ_NORM", "SUP_NORM", "EJECUTIVO", "ventas"])
     if not df_base.empty:
-        ventas_team = df_base.copy()
+        ventas_tmp = df_base.copy()
+        ventas_tmp["EJECUTIVO"] = ventas_tmp["EJECUTIVO"].astype(str).str.strip()
+        ventas_tmp["Supervisor"] = ventas_tmp["Supervisor"].astype(str).str.strip()
+        ventas_tmp["EJ_NORM"] = ventas_tmp["EJECUTIVO"].apply(normalize_name)
+        ventas_tmp["SUP_NORM"] = ventas_tmp["Supervisor"].apply(normalize_name)
 
-        ventas_team["EJECUTIVO"] = ventas_team["EJECUTIVO"].astype(str).str.strip()
-        ventas_team["Supervisor"] = ventas_team["Supervisor"].astype(str).str.strip()
+        ventas_tmp = ventas_tmp[ventas_tmp["SUP_NORM"].isin(valid_sup_norms)].copy()
 
-        ventas_team["EJECUTIVO_norm"] = ventas_team["EJECUTIVO"].apply(normalize_name)
-        ventas_team["Supervisor_norm"] = ventas_team["Supervisor"].apply(normalize_name)
-
-        # keep only supervisors that exist in the HTML map
-        ventas_team = ventas_team[ventas_team["Supervisor_norm"].isin(set(sup_map.keys()))].copy()
-
-        if not ventas_team.empty:
-            ventas_team["FECHA_DE_CAPTURA_SORT"] = pd.to_datetime(ventas_team["FECHA DE CAPTURA"], errors="coerce")
-            ventas_team = ventas_team.sort_values(["FECHA_DE_CAPTURA_SORT", "EJECUTIVO"], ascending=[True, True])
-
-            last_rows = ventas_team.drop_duplicates(subset=["EJECUTIVO_norm"], keep="last").copy()
-
-            last_sup_by_ej = last_rows.set_index("EJECUTIVO_norm")["Supervisor_norm"].to_dict()
-            last_name_by_ej = last_rows.set_index("EJECUTIVO_norm")["EJECUTIVO"].to_dict()
+        ventas_agents_df = (
+            ventas_tmp.groupby(["EJ_NORM", "SUP_NORM", "EJECUTIVO"], as_index=False)
+            .size()
+            .rename(columns={"size": "ventas"})
+            .sort_values(["ventas", "EJECUTIVO"], ascending=[False, True])
+            .drop_duplicates(subset=["EJ_NORM"], keep="first")
+            .copy()
+        )
 
     # ---------------------------------------------------------
-    # 5A) Fallback maps from detalle (names / supervisor / meta)
+    # ✅ PROGRAMACION -> supervisor assignment at ROW LEVEL
     # ---------------------------------------------------------
-    sup_from_detalle = {}
-    name_from_detalle = {}
-    meta_from_detalle = {}
+    agent_records = {}
 
-    if 'df_detalle_full' in locals() and not df_detalle_full.empty:
-        det_tmp = df_detalle_full.copy()
-        det_tmp["Ejecutivo"] = det_tmp["Ejecutivo"].astype(str).str.strip()
-        det_tmp["Supervisor"] = det_tmp["Supervisor"].astype(str).str.strip()
+    def ensure_agent(ej_norm: str):
+        if ej_norm not in agent_records:
+            agent_records[ej_norm] = {
+                "ej_norm": ej_norm,
+                "sup_norm": None,
+                "name": "",
+                "meta": 0,
+                "ventas": 0,
+                "backFeb": 0,
+                "entrega": 0,
+                "prep": 0,
+                "solic": 0,
+                "backoff": 0,
+                "sinventa": 0,
+            }
+        return agent_records[ej_norm]
 
-        det_tmp = det_tmp[
-            (det_tmp["Ejecutivo"].str.upper() != "TOTAL") & 
-            (det_tmp["Supervisor"].str.upper() != "TOTAL")
-        ].copy()
+    # Seed from ventas reales first
+    if not ventas_agents_df.empty:
+        for _, r in ventas_agents_df.iterrows():
+            ej_norm = r["EJ_NORM"]
+            rec = ensure_agent(ej_norm)
+            rec["sup_norm"] = r["SUP_NORM"] if r["SUP_NORM"] in valid_sup_norms else rec["sup_norm"]
+            rec["name"] = str(r["EJECUTIVO"]).strip() or rec["name"]
+            rec["ventas"] = int(r["ventas"])
 
-        det_tmp["EJ_NORM"] = det_tmp["Ejecutivo"].apply(normalize_name)
-        det_tmp["SUP_NORM"] = det_tmp["Supervisor"].apply(normalize_name)
+    if not prog_history.empty:
+        prog_assign = prog_history.copy()
 
-        # keep only supervisors visible in HTML
-        det_tmp = det_tmp[det_tmp["SUP_NORM"].isin(set(sup_map.keys()))].copy()
+        # Resolve supervisor row by row using employee roster first
+        prog_assign["SUP_NORM_HTML"] = prog_assign["EJ_NORM"].map(emp_exact_sup_map)
+        prog_assign["NAME_HTML"] = prog_assign["EJ_NORM"].map(emp_exact_name_map)
 
-        if "Ventas" in det_tmp.columns:
-            det_tmp["Ventas"] = pd.to_numeric(det_tmp["Ventas"], errors="coerce").fillna(0)
-            det_tmp = det_tmp.sort_values(["Ventas", "Ejecutivo"], ascending=[False, True])
-        else:
-            det_tmp = det_tmp.sort_values(["Ejecutivo"])
+        # Fallback row-level where employee roster did not resolve
+        unresolved_mask = ~prog_assign["SUP_NORM_HTML"].isin(valid_sup_norms)
+        if unresolved_mask.any():
+            prog_unres = prog_assign.loc[unresolved_mask].copy()
+            resolved_sup = []
+            resolved_name = []
 
-        det_tmp = det_tmp.drop_duplicates(subset=["EJ_NORM"], keep="first").copy()
-        sup_from_detalle = det_tmp.set_index("EJ_NORM")["SUP_NORM"].to_dict()
-        name_from_detalle = det_tmp.set_index("EJ_NORM")["Ejecutivo"].to_dict()
+            for _, rr in prog_unres.iterrows():
+                ej_norm = rr["EJ_NORM"]
+                vendor_name = str(rr.get("EJECUTIVO", "") or rr.get("Vendedor", "") or "").strip()
 
-        if "Meta" in det_tmp.columns:
-            meta_from_detalle = pd.to_numeric(det_tmp["Meta"], errors="coerce").fillna(0).groupby(det_tmp["EJ_NORM"]).first().to_dict()
+                sup_norm_res = _resolve_sup_from_name(
+                    ej_norm=ej_norm,
+                    candidate_name=vendor_name,
+                    exact_sup_map=emp_exact_sup_map,
+                    fallback_sales_sup=last_sup_by_ej,
+                    fallback_detalle_sup=sup_from_detalle,
+                    roster_records=emp_roster_records,
+                )
+
+                name_res = (
+                    str(emp_exact_name_map.get(ej_norm, "")).strip()
+                    or str(last_name_by_ej.get(ej_norm, "")).strip()
+                    or str(name_from_detalle.get(ej_norm, "")).strip()
+                    or vendor_name
+                    or str(ej_norm).strip()
+                )
+
+                resolved_sup.append(sup_norm_res)
+                resolved_name.append(name_res)
+
+            prog_assign.loc[unresolved_mask, "SUP_NORM_HTML"] = resolved_sup
+            prog_assign.loc[unresolved_mask, "NAME_HTML"] = resolved_name
+
+        prog_assign["SUP_NORM_RESUELTO"] = prog_assign["SUP_NORM_HTML"]
+        prog_assign["NAME_RESUELTO"] = prog_assign["NAME_HTML"]
+
+        # ---------- Pipeline rows in selected month ----------
+        mask_pipeline = (
+            (prog_assign["Fecha_Creacion_DT"] >= interval_start)
+            & (prog_assign["Fecha_Creacion_DT"] <= interval_end)
+        )
+        df_pipeline = prog_assign.loc[mask_pipeline].copy()
+
+        if not df_pipeline.empty:
+            condlist = [
+                df_pipeline["Estatus_upper"].eq("EN ENTREGA"),
+                df_pipeline["Estatus_upper"].isin(["EN PREPARACION", "EN PREPARACIÓN"]),
+                df_pipeline["Estatus_upper"].eq("SOLICITADO"),
+                df_pipeline["Estatus_upper"].isin(["BACK OFFICE", "BACKOFFICE"]),
+                (df_pipeline["Estatus_upper"] == "ENTREGADO") & df_pipeline["Venta_Vacia"],
+            ]
+            choicelist = ["entrega", "prep", "solic", "backoff", "sinventa"]
+            df_pipeline["HTML_Cat"] = np.select(condlist, choicelist, default=None)
+
+            df_pipeline = df_pipeline[
+                df_pipeline["HTML_Cat"].notna()
+                & df_pipeline["SUP_NORM_RESUELTO"].isin(valid_sup_norms)
+            ].copy()
+
+            if not df_pipeline.empty:
+                pipe_group = (
+                    df_pipeline.groupby(["EJ_NORM", "SUP_NORM_RESUELTO", "NAME_RESUELTO", "HTML_Cat"], as_index=False)
+                    .size()
+                    .rename(columns={"size": "n"})
+                )
+
+                for _, rr in pipe_group.iterrows():
+                    ej_norm = rr["EJ_NORM"]
+                    rec = ensure_agent(ej_norm)
+
+                    if rr["SUP_NORM_RESUELTO"] in valid_sup_norms:
+                        rec["sup_norm"] = rr["SUP_NORM_RESUELTO"]
+
+                    if str(rr["NAME_RESUELTO"]).strip():
+                        rec["name"] = str(rr["NAME_RESUELTO"]).strip()
+
+                    cat = str(rr["HTML_Cat"]).strip()
+                    n = int(rr["n"])
+                    if cat == "entrega":
+                        rec["entrega"] += n
+                    elif cat == "prep":
+                        rec["prep"] += n
+                    elif cat == "solic":
+                        rec["solic"] += n
+                    elif cat == "backoff":
+                        rec["backoff"] += n
+                    elif cat == "sinventa":
+                        rec["sinventa"] += n
+
+        # ---------- True Back Office rows in selected month ----------
+        bo_dt = choose_backoffice_dt_html(prog_assign, window_start=start_dt, window_end=end_dt)
+        prog_assign["BO_DT"] = bo_dt
+        prog_assign["BO_Fecha"] = prog_assign["BO_DT"].dt.date
+
+        mask_bo = (
+            (prog_assign["Estatus_upper"] != "CANC ERROR")
+            & (prog_assign["BO_DT"].notna())
+            & (prog_assign["BO_Fecha"] >= interval_start)
+            & (prog_assign["BO_Fecha"] <= interval_end)
+            & (prog_assign["SUP_NORM_RESUELTO"].isin(valid_sup_norms))
+        )
+
+        backoffice_df = prog_assign.loc[mask_bo].copy()
+
+        if not backoffice_df.empty:
+            bo_group = (
+                backoffice_df.groupby(["EJ_NORM", "SUP_NORM_RESUELTO", "NAME_RESUELTO"], as_index=False)
+                .size()
+                .rename(columns={"size": "backFeb"})
+            )
+
+            for _, rr in bo_group.iterrows():
+                ej_norm = rr["EJ_NORM"]
+                rec = ensure_agent(ej_norm)
+
+                if rr["SUP_NORM_RESUELTO"] in valid_sup_norms:
+                    rec["sup_norm"] = rr["SUP_NORM_RESUELTO"]
+
+                if str(rr["NAME_RESUELTO"]).strip():
+                    rec["name"] = str(rr["NAME_RESUELTO"]).strip()
+
+                rec["backFeb"] += int(rr["backFeb"])
 
     # ---------------------------------------------------------
-    # 5B) Build UNIQUE universe of agents
+    # ✅ Finalize agent records
     # ---------------------------------------------------------
-    all_agent_norms = (
-        set(ventas_reales_dict.keys())
-        | set(total_back_dict.keys())
-        | set(pipeline_dict.keys())
-        | set(sup_from_detalle.keys())
-    )
+    for ej_norm, rec in agent_records.items():
+        if rec["sup_norm"] not in valid_sup_norms:
+            # last fallback from ventas/detalle
+            sup_norm_fallback = last_sup_by_ej.get(ej_norm) or sup_from_detalle.get(ej_norm)
+            if sup_norm_fallback in valid_sup_norms:
+                rec["sup_norm"] = sup_norm_fallback
 
-    for ej_norm in sorted(all_agent_norms):
-        sup_norm = last_sup_by_ej.get(ej_norm) or sup_from_detalle.get(ej_norm)
+        if not rec["name"]:
+            rec["name"] = (
+                str(emp_exact_name_map.get(ej_norm, "")).strip()
+                or str(last_name_by_ej.get(ej_norm, "")).strip()
+                or str(name_from_detalle.get(ej_norm, "")).strip()
+                or str(ej_norm).strip()
+            )
 
-        if sup_norm not in sup_map:
+        mv = metas_map_html.get(ej_norm, meta_from_detalle.get(ej_norm, 0))
+        try:
+            rec["meta"] = int(float(mv)) if pd.notna(mv) else 0
+        except Exception:
+            rec["meta"] = 0
+
+    # ---------------------------------------------------------
+    # ✅ Push agents into payload
+    # ---------------------------------------------------------
+    for ej_norm, rec in agent_records.items():
+        sup_norm = rec["sup_norm"]
+        if sup_norm not in valid_sup_norms:
             continue
 
         sup_id = sup_map[sup_norm]
-        ejec_name = str(last_name_by_ej.get(ej_norm, "")).strip() or str(name_from_detalle.get(ej_norm, "")).strip() or str(ej_norm).strip()
 
-        _mv = metas_map_html.get(ej_norm, meta_from_detalle.get(ej_norm, 0))
-        try:
-            meta_val = int(float(_mv)) if pd.notna(_mv) else 0
-        except Exception:
-            meta_val = 0
-
-        v_ventas = int(ventas_reales_dict.get(ej_norm, 0) or 0)
-        p_data = pipeline_dict.get(ej_norm, {})
-        v_entrega  = int(p_data.get("entrega", 0) or 0)
-        v_prep     = int(p_data.get("prep", 0) or 0)
-        v_solic    = int(p_data.get("solic", 0) or 0)
-        v_backoff  = int(p_data.get("backoff", 0) or 0)
-        v_sinventa = int(p_data.get("sinventa", 0) or 0)
-        v_back_feb = int(total_back_dict.get(ej_norm, 0) or 0)
-
-        agent_data = {
-            "name": ejec_name,
-            "meta": meta_val,
-            "data": {
-                "ventas": v_ventas,
-                "backFeb": v_back_feb,
-                "entrega": v_entrega,
-                "prep": v_prep,
-                "solic": v_solic,
-                "backoff": v_backoff,
-                "sinventa": v_sinventa,
+        live_data_payload["agents"][sup_id].append(
+            {
+                "name": rec["name"],
+                "meta": int(rec["meta"]),
+                "data": {
+                    "ventas": int(rec["ventas"]),
+                    "backFeb": int(rec["backFeb"]),
+                    "entrega": int(rec["entrega"]),
+                    "prep": int(rec["prep"]),
+                    "solic": int(rec["solic"]),
+                    "backoff": int(rec["backoff"]),
+                    "sinventa": int(rec["sinventa"]),
+                },
             }
-        }
-        live_data_payload["agents"][sup_id].append(agent_data)
+        )
 
     # ---------------------------------------------------------
     # 5C) Sort agents inside each supervisor
@@ -4593,19 +4828,29 @@ with tabs[9]:
     for _sup_id in live_data_payload["agents"].keys():
         live_data_payload["agents"][_sup_id] = sorted(
             live_data_payload["agents"][_sup_id],
-            key=lambda a: (-int(a.get("data", {}).get("ventas", 0) or 0), str(a.get("name", "")))
+            key=lambda a: (
+                -int(a.get("data", {}).get("ventas", 0) or 0),
+                -(
+                    int(a.get("data", {}).get("entrega", 0) or 0)
+                    + int(a.get("data", {}).get("prep", 0) or 0)
+                    + int(a.get("data", {}).get("solic", 0) or 0)
+                    + int(a.get("data", {}).get("backoff", 0) or 0)
+                    + int(a.get("data", {}).get("sinventa", 0) or 0)
+                ),
+                str(a.get("name", "")),
+            ),
         )
 
     # ---------------------------------------------------------
     # 5D) Recompute supervisor totals FROM UNIQUE AGENTS
     # ---------------------------------------------------------
     for _sup_id, _agents in live_data_payload["agents"].items():
-        live_data_payload["supData"][_sup_id]["ventas"]   = int(sum(a["data"].get("ventas", 0)   for a in _agents))
-        live_data_payload["supData"][_sup_id]["backFeb"]  = int(sum(a["data"].get("backFeb", 0)  for a in _agents))
-        live_data_payload["supData"][_sup_id]["entrega"]  = int(sum(a["data"].get("entrega", 0)  for a in _agents))
-        live_data_payload["supData"][_sup_id]["prep"]     = int(sum(a["data"].get("prep", 0)     for a in _agents))
-        live_data_payload["supData"][_sup_id]["solic"]    = int(sum(a["data"].get("solic", 0)    for a in _agents))
-        live_data_payload["supData"][_sup_id]["backoff"]  = int(sum(a["data"].get("backoff", 0)  for a in _agents))
+        live_data_payload["supData"][_sup_id]["ventas"] = int(sum(a["data"].get("ventas", 0) for a in _agents))
+        live_data_payload["supData"][_sup_id]["backFeb"] = int(sum(a["data"].get("backFeb", 0) for a in _agents))
+        live_data_payload["supData"][_sup_id]["entrega"] = int(sum(a["data"].get("entrega", 0) for a in _agents))
+        live_data_payload["supData"][_sup_id]["prep"] = int(sum(a["data"].get("prep", 0) for a in _agents))
+        live_data_payload["supData"][_sup_id]["solic"] = int(sum(a["data"].get("solic", 0) for a in _agents))
+        live_data_payload["supData"][_sup_id]["backoff"] = int(sum(a["data"].get("backoff", 0) for a in _agents))
         live_data_payload["supData"][_sup_id]["sinventa"] = int(sum(a["data"].get("sinventa", 0) for a in _agents))
 
     # 6. Convert to JSON and Inject into HTML
@@ -4623,7 +4868,7 @@ with tabs[9]:
             html_content = f.read()
 
         html_content = html_content.replace(
-            "/*PYTHON_INJECTS_JSON_HERE*/ null", 
+            "/*PYTHON_INJECTS_JSON_HERE*/ null",
             json_data
         )
 
