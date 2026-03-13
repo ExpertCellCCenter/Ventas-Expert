@@ -609,35 +609,37 @@ function recalcAll() {
 
   const members = getViewMembers();
   const dias = getSystemDias();
-  if (members.length === 0) return;
+
+  if (!members.length) {
+    updateTotals();
+    return;
+  }
 
   members.forEach((m, i) => {
     const meta = safeNum(m.meta);
-    const ventas = safeNum(m.data.ventas);
-    const backFeb = safeNum(m.data.backFeb);
-    const entrega = safeNum(m.data.entrega);
-    const prep = safeNum(m.data.prep);
-    const solic = safeNum(m.data.solic);
-    const backoff = safeNum(m.data.backoff);
-    const sinventa = safeNum(m.data.sinventa);
+    const ventas = safeNum(m.data?.ventas);
+    const backFeb = safeNum(m.data?.backFeb);
+    const entrega = safeNum(m.data?.entrega);
+    const prep = safeNum(m.data?.prep);
+    const solic = safeNum(m.data?.solic);
+    const backoff = safeNum(m.data?.backoff);
+    const sinventa = safeNum(m.data?.sinventa);
 
-    const metaEl = document.getElementById(`meta_${i}`);
-    const ventasEl = document.getElementById(`ventas_${i}`);
-    const backFebEl = document.getElementById(`backFeb_${i}`);
-    const entregaEl = document.getElementById(`entrega_${i}`);
-    const prepEl = document.getElementById(`prep_${i}`);
-    const solicEl = document.getElementById(`solic_${i}`);
-    const backoffEl = document.getElementById(`backoff_${i}`);
-    const sinventaEl = document.getElementById(`sinventa_${i}`);
+    const fields = {
+      meta,
+      ventas,
+      backFeb,
+      entrega,
+      prep,
+      solic,
+      backoff,
+      sinventa
+    };
 
-    if (metaEl) metaEl.value = meta;
-    if (ventasEl) ventasEl.value = ventas;
-    if (backFebEl) backFebEl.value = backFeb;
-    if (entregaEl) entregaEl.value = entrega;
-    if (prepEl) prepEl.value = prep;
-    if (solicEl) solicEl.value = solic;
-    if (backoffEl) backoffEl.value = backoff;
-    if (sinventaEl) sinventaEl.value = sinventa;
+    Object.entries(fields).forEach(([field, value]) => {
+      const el = document.getElementById(`${field}_${i}`);
+      if (el) el.value = value;
+    });
 
     const faltan = meta - ventas;
     const conv = backFeb > 0 ? (ventas / backFeb) * 100 : 0;
@@ -1115,19 +1117,19 @@ async function downloadPDF() {
   if (wasInput) switchTab('input');
 }
 
-// ══════════════════════════════════════════════
-//  PYTHON INJECTION BLOCK (Streamlit Integration)
-// ══════════════════════════════════════════════
-const INJECTED_DATA = /*PYTHON_INJECTS_JSON_HERE*/ null;
+// ══════════════════════════════
+//  APPLY INJECTED DATA
+// ══════════════════════════════
+function applyInjectedData(data) {
+  if (!data) return;
 
-if (INJECTED_DATA) {
-  if (INJECTED_DATA.backLabel) {
-    ORG.backLabel = INJECTED_DATA.backLabel;
+  if (data.backLabel) {
+    ORG.backLabel = data.backLabel;
   }
 
-  if (INJECTED_DATA.supData) {
-    Object.keys(INJECTED_DATA.supData).forEach(k => {
-      const v = INJECTED_DATA.supData[k] || {};
+  if (data.supData) {
+    Object.keys(data.supData).forEach(k => {
+      const v = data.supData[k] || {};
       ORG.supData[k] = {
         ventas: safeNum(v.ventas),
         backFeb: safeNum(v.backFeb),
@@ -1140,17 +1142,17 @@ if (INJECTED_DATA) {
     });
   }
 
-  if (INJECTED_DATA.supMetas) {
-    for (const [supId, meta] of Object.entries(INJECTED_DATA.supMetas)) {
+  if (data.supMetas) {
+    for (const [supId, meta] of Object.entries(data.supMetas)) {
       if (ORG.supervisors[supId]) {
         ORG.supervisors[supId].meta = safeNum(meta);
       }
     }
   }
 
-  if (INJECTED_DATA.agents) {
-    Object.keys(INJECTED_DATA.agents).forEach(supId => {
-      const agents = Array.isArray(INJECTED_DATA.agents[supId]) ? INJECTED_DATA.agents[supId] : [];
+  if (data.agents) {
+    Object.keys(data.agents).forEach(supId => {
+      const agents = Array.isArray(data.agents[supId]) ? data.agents[supId] : [];
       ORG.agents[supId] = agents.map(a => ({
         name: a.name || a.nombre || '',
         meta: safeNum(a.meta),
@@ -1167,23 +1169,37 @@ if (INJECTED_DATA) {
     });
   }
 
-  if (INJECTED_DATA.diasRestantes !== undefined) {
-    SYSTEM_STATE.diasRestantes = safeNum(INJECTED_DATA.diasRestantes);
+  if (data.diasRestantes !== undefined) {
+    SYSTEM_STATE.diasRestantes = safeNum(data.diasRestantes);
   }
 
-  if (INJECTED_DATA.periodo) {
-    SYSTEM_STATE.periodo = String(INJECTED_DATA.periodo);
+  if (data.periodo) {
+    SYSTEM_STATE.periodo = String(data.periodo);
   }
 
   syncSystemInputs();
-  console.log("Datos inyectados exitosamente por Streamlit");
 
   if (currentUser && typeof buildInputTable === 'function') {
     buildInputTable();
-    if (document.getElementById('panelReport').classList.contains('active')) {
-      buildReport();
-    }
+
+    requestAnimationFrame(() => {
+      recalcAll();
+
+      if (document.getElementById('panelReport').classList.contains('active')) {
+        buildReport();
+      }
+    });
   }
+}
+
+// ══════════════════════════════════════════════
+//  PYTHON INJECTION BLOCK (Streamlit Integration)
+// ══════════════════════════════════════════════
+const INJECTED_DATA = /*PYTHON_INJECTS_JSON_HERE*/ null;
+
+if (INJECTED_DATA) {
+  applyInjectedData(INJECTED_DATA);
+  console.log("Datos inyectados exitosamente por Streamlit");
 }
 </script>
 </body>
