@@ -1218,6 +1218,22 @@ mes_sel = st.sidebar.selectbox(
 )
 metas = load_metas_df(int(mes_sel))
 
+# ==========================================================
+# ✅ NUEVO: Mostrar el equipo de Maria Fernanda SOLO en MARZO 2026
+# ==========================================================
+mf_norm = normalize_name("MARIA FERNANDA MARTINEZ BISTRAIN")
+
+# 1. Eliminar permanentemente sus ventas de cualquier mes que NO sea marzo 2026 (202603)
+mask_mf_ventas = (ventas["Supervisor_norm"] == mf_norm) & (ventas["AñoMes"] != 202603)
+ventas = ventas[~mask_mf_ventas].copy()
+
+# 2. Si el mes seleccionado en pantalla NO es marzo 2026, ocultarla de los filtros y del catálogo
+if int(mes_sel) != 202603:
+    ventas_filtros = ventas_filtros[ventas_filtros["Supervisor_norm"] != mf_norm].copy()
+    empleados = empleados[empleados["Jefe Inmediato"].astype(str).apply(normalize_name) != mf_norm].copy()
+    empleados = empleados[empleados["Nombre"].astype(str).apply(normalize_name) != mf_norm].copy()
+# ==========================================================
+
 center_keys = ["CC2", "JV"]
 center_sel = st.sidebar.multiselect("Centro (CC2 / JV)", options=center_keys, default=center_keys)
 
@@ -3589,11 +3605,28 @@ with tabs[7]:
         emp_sup = emp_sup[emp_sup["Supervisor_norm"].isin(sup_norm_filter)].copy()
 
     # Dedup
+    # Dedup
     emp_sup = emp_sup.drop_duplicates("Supervisor_norm", keep="first")
 
     active_supervisores_norm = set(emp_sup["Supervisor_norm"].dropna().tolist())
 
+    # ==========================================================
+    # ✅ NUEVO: Forzar el medidor de Maria Fernanda en Metas (Marzo 2026)
+    # ==========================================================
+    mf_norm = normalize_name("MARIA FERNANDA MARTINEZ BISTRAIN")
+    if int(mes_sel) == 202603 and mf_norm not in active_supervisores_norm:
+        nueva_fila = pd.DataFrame([{
+            "Supervisor": "MARIA FERNANDA MARTINEZ BISTRAIN",
+            "Supervisor_norm": mf_norm,
+            "CentroKey": "JV"
+        }])
+        emp_sup = pd.concat([emp_sup, nueva_fila], ignore_index=True)
+        active_supervisores_norm.add(mf_norm)
+    # ==========================================================
+
     metas_sup_show = metas_sup[metas_sup["Nombre_norm"].isin(active_supervisores_norm)].copy()
+
+    
     if center_sel:
         metas_sup_show["Centro"] = metas_sup_show["Centro"].astype(str).str.strip().str.upper()
         metas_sup_show = metas_sup_show[metas_sup_show["Centro"].isin([c.upper() for c in center_sel])].copy()
@@ -4394,6 +4427,11 @@ with tabs[9]:
         normalize_name("JORGE MIGUEL UREÑA ZARATE"): "jorge",
         normalize_name("MARIA FERNANDA MARTINEZ BISTRAIN"): "maria",
     }
+
+    # ✅ NUEVO: Sacarla del JSON de la interfaz HTML si el mes no es marzo 2026
+    if int(mes_sel) != 202603:
+        sup_map.pop(normalize_name("MARIA FERNANDA MARTINEZ BISTRAIN"), None)
+
     valid_sup_norms = set(sup_map.keys())
 
     # ---------------------------------------------------------
