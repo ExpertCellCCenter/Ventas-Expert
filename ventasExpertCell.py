@@ -3639,6 +3639,22 @@ with tabs[7]:
 
     if not metas_sup_show.empty:
         meta_global = int(pd.to_numeric(metas_sup_show["Meta"], errors="coerce").fillna(0).sum())
+
+        # --- INICIO DEL CAMBIO ---
+        # Rescatar la meta perdida de Maria Fernanda y sumarla a la Meta Global
+        ml_norm_meta = normalize_name("MARIA LUISA MEZA GOEL")
+        mf_norm_meta = normalize_name("MARIA FERNANDA MARTINEZ BISTRAIN")
+
+        if ml_norm_meta in active_supervisores_norm:
+            # Buscamos cuánto era la meta de Maria Fernanda en el Excel original
+            mf_row = metas_sup[metas_sup["Nombre_norm"] == mf_norm_meta]
+            if not mf_row.empty:
+                extra_meta = int(pd.to_numeric(mf_row["Meta"].iloc[0], errors="coerce") or 0)
+                # Si Maria Fernanda está inactiva y no se sumó, la sumamos a la fuerza
+                if mf_norm_meta not in active_supervisores_norm:
+                    meta_global += extra_meta
+        # --- FIN DEL CAMBIO ---
+
     else:
         meta_global = int(pd.to_numeric(metas_centro_f["Meta"], errors="coerce").fillna(0).sum()) if not metas_centro_f.empty else 0
 
@@ -3724,9 +3740,18 @@ with tabs[7]:
                 achieved = int(rr["Achieved"])
 
                 meta_val = np.nan
+
+                # --- INICIO DEL CAMBIO ---
+                # Engañamos al código: si busca a Maria Luisa, le pasamos a Maria Fernanda
+                _lookup_norm = sup_norm
+                if _lookup_norm == normalize_name("MARIA LUISA MEZA GOEL"):
+                    _lookup_norm = normalize_name("MARIA FERNANDA MARTINEZ BISTRAIN")
+
                 mrow = metas_sup_local[
-                    (metas_sup_local["Nombre_norm"] == sup_norm) & (metas_sup_local["Centro"] == centro)
+                    (metas_sup_local["Nombre_norm"] == _lookup_norm) & (metas_sup_local["Centro"] == centro)
                 ]
+                # --- FIN DEL CAMBIO ---
+
                 if not mrow.empty:
                     mv = pd.to_numeric(mrow["Meta"].iloc[0], errors="coerce")
                     meta_val = float(mv) if pd.notna(mv) else np.nan
@@ -4626,11 +4651,27 @@ with tabs[9]:
     metas_sup_map_html = load_metas_supervisor_from_excel(int(mes_sel))
 
     for sup_norm, sup_id in sup_map.items():
-        mv = metas_sup_map_html.get(sup_norm, 0)
+
+        # --- INICIO DEL CAMBIO ---
+        # Igual que arriba, si el ID es de Maria Luisa, buscamos la meta de Maria Fernanda
+        _lookup_norm = sup_norm
+        if _lookup_norm == ml_norm_html:
+            _lookup_norm = mf_norm_html
+
+        mv = metas_sup_map_html.get(_lookup_norm, 0)
+        # --- FIN DEL CAMBIO ---
+
         try:
-            live_data_payload["supMetas"][sup_id] = int(float(mv)) if pd.notna(mv) else 0
+            meta_val = int(float(mv)) if pd.notna(mv) else 0
         except Exception:
-            live_data_payload["supMetas"][sup_id] = 0
+            meta_val = 0
+
+        # ✅ Si dos supervisoras caen en el mismo bloque HTML ("maria"),
+        # conservar la meta válida más alta y no sobrescribirla.
+        live_data_payload["supMetas"][sup_id] = max(
+            int(live_data_payload["supMetas"].get(sup_id, 0)),
+            meta_val,
+        )
 
     # ---------------------------------------------------------
     # ✅ TRUE SALES (from ventas dashboard month selection)
