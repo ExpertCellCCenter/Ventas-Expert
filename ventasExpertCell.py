@@ -1218,6 +1218,23 @@ mes_sel = st.sidebar.selectbox(
 )
 metas = load_metas_df(int(mes_sel))
 
+# ==========================================================
+# ✅ NUEVO: Mostrar el equipo de Maria Luisa SOLO en MARZO 2026
+# ==========================================================
+ml_norm = normalize_name("MARIA LUISA MEZA GOEL")
+
+# 1. Limpiar sus ventas si no es Marzo 2026
+mask_ml_ventas = (ventas["Supervisor_norm"] == ml_norm) & (ventas["AñoMes"] != 202603)
+ventas = ventas[~mask_ml_ventas].copy()
+
+# 2. Ocultarla del menú desplegable si NO es Marzo 2026
+if int(mes_sel) != 202603:
+    ventas_filtros = ventas_filtros[ventas_filtros["Supervisor_norm"] != ml_norm].copy()
+else:
+    # 3. Si ES Marzo 2026, asegurarnos de que la BD no la elimine por decir "BAJA"
+    empleados.loc[empleados["Nombre"].apply(normalize_name) == ml_norm, "Estatus"] = "ACTIVO"
+# ==========================================================
+
 center_keys = ["CC2", "JV"]
 center_sel = st.sidebar.multiselect("Centro (CC2 / JV)", options=center_keys, default=center_keys)
 
@@ -2692,7 +2709,7 @@ with tabs[4]:
     # ------------------------------------------------
     _BOSS_SUPS = [
         "BLANCA LETICIA HERNANDEZ CARRILLO",
-        "MARIA LUISA MEZA GOEL",
+        #"MARIA LUISA MEZA GOEL",
         "ANTONIO HERNAN GOMEZ OLVERA",
         "JONATHAN ARTURO TENORIO DEL AGUILA",
         "NELLY MASHIEL CAMPOS JUAREZ",
@@ -2777,11 +2794,13 @@ with tabs[4]:
 
     # Keep only executivos (avoid supervisors/coordinators)
     emp_roster["Puesto"] = emp_roster["Puesto"].astype(str).str.strip().str.upper()
+    ml_norm_tab5 = normalize_name("MARIA LUISA MEZA GOEL")
     emp_roster = emp_roster[
         (~emp_roster["Puesto"].str.contains("SUPERV", na=False))
         & (~emp_roster["Puesto"].str.contains("COORD", na=False))
         & (~emp_roster["Puesto"].str.contains("GEREN", na=False))
         & (~emp_roster["Puesto"].str.contains("JEFE", na=False))
+        | (emp_roster["Jefe Inmediato"].astype(str).apply(normalize_name) == ml_norm_tab5) # ✅ Salva a su equipo
     ].copy()
 
     # Normalize fields
@@ -3589,11 +3608,28 @@ with tabs[7]:
         emp_sup = emp_sup[emp_sup["Supervisor_norm"].isin(sup_norm_filter)].copy()
 
     # Dedup
+    # Dedup
     emp_sup = emp_sup.drop_duplicates("Supervisor_norm", keep="first")
 
     active_supervisores_norm = set(emp_sup["Supervisor_norm"].dropna().tolist())
 
+    # ==========================================================
+    # ✅ NUEVO: Forzar el medidor de Maria Luisa en Metas (Marzo 2026)
+    # ==========================================================
+    ml_norm_meta = normalize_name("MARIA LUISA MEZA GOEL")
+    if int(mes_sel) == 202603 and ml_norm_meta not in active_supervisores_norm:
+        nueva_fila = pd.DataFrame([{
+            "Supervisor": "MARIA LUISA MEZA GOEL",
+            "Supervisor_norm": ml_norm_meta,
+            "CentroKey": "JV"
+        }])
+        emp_sup = pd.concat([emp_sup, nueva_fila], ignore_index=True)
+        active_supervisores_norm.add(ml_norm_meta)
+    # ==========================================================
+
     metas_sup_show = metas_sup[metas_sup["Nombre_norm"].isin(active_supervisores_norm)].copy()
+
+
     if center_sel:
         metas_sup_show["Centro"] = metas_sup_show["Centro"].astype(str).str.strip().str.upper()
         metas_sup_show = metas_sup_show[metas_sup_show["Centro"].isin([c.upper() for c in center_sel])].copy()
@@ -4386,16 +4422,24 @@ with tabs[9]:
         back_label = f"BACK {interval_start.strftime('%d/%m/%Y')} → {interval_end.strftime('%d/%m/%Y')}"
 
     # 3. Map SQL supervisor names -> HTML IDs
+    mf_norm_html = normalize_name("MARIA FERNANDA MARTINEZ BISTRAIN")
+    ml_norm_html = normalize_name("MARIA LUISA MEZA GOEL")
+
     sup_map = {
         normalize_name("REYNA LIZZETTE MARTINEZ GARCIA"): "reyna",
         normalize_name("ALAN UZIEL SALAZAR AGUILAR"): "alan",
         normalize_name("CARLOS ALBERTO AGUILAR CANO"): "carlos",
         normalize_name("ALFREDO CABRERA PADRON"): "alfredo",
         normalize_name("JORGE MIGUEL UREÑA ZARATE"): "jorge",
-        normalize_name("MARIA FERNANDA MARTINEZ BISTRAIN"): "maria",
+        mf_norm_html: "maria",
+        ml_norm_html: "maria",
     }
-    valid_sup_norms = set(sup_map.keys())
 
+    # ✅ NUEVO: Sacarla del JSON de la interfaz HTML si el mes no es marzo 2026
+    if int(mes_sel) != 202603:
+        sup_map.pop(ml_norm_html, None)
+
+    valid_sup_norms = set(sup_map.keys())
     # ---------------------------------------------------------
     # ✅ HELPERS
     # ---------------------------------------------------------
@@ -4782,6 +4826,10 @@ with tabs[9]:
             if sup_norm_fallback in valid_sup_norms:
                 rec["sup_norm"] = sup_norm_fallback
 
+        # ✅ NUEVO: todo lo de Maria Luisa se manda al bucket de Maria Fernanda
+        if rec["sup_norm"] == ml_norm_html and mf_norm_html in valid_sup_norms:
+            rec["sup_norm"] = mf_norm_html
+
         if not rec["name"]:
             rec["name"] = (
                 str(emp_exact_name_map.get(ej_norm, "")).strip()
@@ -4801,6 +4849,12 @@ with tabs[9]:
     # ---------------------------------------------------------
     for ej_norm, rec in agent_records.items():
         sup_norm = rec["sup_norm"]
+
+        # ✅ NUEVO: todo lo de Maria Luisa se manda al bucket de Maria Fernanda
+        if sup_norm == ml_norm_html and mf_norm_html in valid_sup_norms:
+            sup_norm = mf_norm_html
+            rec["sup_norm"] = sup_norm
+
         if sup_norm not in valid_sup_norms:
             continue
 
