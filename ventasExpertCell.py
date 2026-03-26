@@ -1223,9 +1223,6 @@ metas = load_metas_df(int(mes_sel))
 # ==========================================================
 ml_norm = normalize_name("MARIA LUISA MEZA GOEL")
 
-# 1. Limpiar sus ventas si no es Marzo 2026
-mask_ml_ventas = (ventas["Supervisor_norm"] == ml_norm) & (ventas["AñoMes"] != 202603)
-ventas = ventas[~mask_ml_ventas].copy()
 
 # 2. Ocultarla del menú desplegable si NO es Marzo 2026
 if int(mes_sel) != 202603:
