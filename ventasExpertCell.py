@@ -3611,10 +3611,15 @@ with tabs[7]:
     active_supervisores_norm = set(emp_sup["Supervisor_norm"].dropna().tolist())
 
     # ==========================================================
-    # ✅ NUEVO: Forzar el medidor de Maria Luisa en Metas (Marzo 2026)
+    # ✅ Mostrar a Maria Luisa en Metas siempre que venga en el Excel del mes
     # ==========================================================
     ml_norm_meta = normalize_name("MARIA LUISA MEZA GOEL")
-    if int(mes_sel) == 202603 and ml_norm_meta not in active_supervisores_norm:
+    ml_has_meta_this_month = (
+        not metas_sup.empty
+        and ml_norm_meta in set(metas_sup["Nombre_norm"].astype(str))
+    )
+
+    if ml_has_meta_this_month and ml_norm_meta not in active_supervisores_norm:
         nueva_fila = pd.DataFrame([{
             "Supervisor": "MARIA LUISA MEZA GOEL",
             "Supervisor_norm": ml_norm_meta,
@@ -3738,16 +3743,19 @@ with tabs[7]:
 
                 meta_val = np.nan
 
-                # --- INICIO DEL CAMBIO ---
-                # Engañamos al código: si busca a Maria Luisa, le pasamos a Maria Fernanda
+                # ✅ Primero buscar la meta real del supervisor en el Excel del mes.
+                # ✅ Solo si no existe y es Maria Luisa, usar Maria Fernanda como fallback.
                 _lookup_norm = sup_norm
-                if _lookup_norm == normalize_name("MARIA LUISA MEZA GOEL"):
-                    _lookup_norm = normalize_name("MARIA FERNANDA MARTINEZ BISTRAIN")
 
                 mrow = metas_sup_local[
                     (metas_sup_local["Nombre_norm"] == _lookup_norm) & (metas_sup_local["Centro"] == centro)
                 ]
-                # --- FIN DEL CAMBIO ---
+
+                if mrow.empty and _lookup_norm == normalize_name("MARIA LUISA MEZA GOEL"):
+                    mrow = metas_sup_local[
+                        (metas_sup_local["Nombre_norm"] == normalize_name("MARIA FERNANDA MARTINEZ BISTRAIN"))
+                        & (metas_sup_local["Centro"] == centro)
+                    ]
 
                 if not mrow.empty:
                     mv = pd.to_numeric(mrow["Meta"].iloc[0], errors="coerce")
@@ -4457,11 +4465,7 @@ with tabs[9]:
         ml_norm_html: "maria",
     }
 
-    # ✅ NUEVO: Sacarla del JSON de la interfaz HTML si el mes no es marzo 2026
-    if int(mes_sel) != 202603:
-        sup_map.pop(ml_norm_html, None)
 
-    valid_sup_norms = set(sup_map.keys())
     # ---------------------------------------------------------
     # ✅ HELPERS
     # ---------------------------------------------------------
@@ -4480,12 +4484,12 @@ with tabs[9]:
         roster_records: list[dict],
     ):
         # 1) exact by normalized employee name
-        if ej_norm in exact_sup_map and exact_sup_map[ej_norm] in valid_sup_norms:
+        if ej_norm in exact_sup_map and exact_sup_map[ej_norm] in sup_map:
             return exact_sup_map[ej_norm]
 
         # 2) fallback from ventas / detalle
         sup_norm = fallback_sales_sup.get(ej_norm) or fallback_detalle_sup.get(ej_norm)
-        if sup_norm in valid_sup_norms:
+        if sup_norm in sup_map:
             return sup_norm
 
         # 3) fuzzy by tokens against employee roster
@@ -4553,7 +4557,7 @@ with tabs[9]:
         ascending=[False, False, True],
     ).drop_duplicates(subset=["EJ_NORM"], keep="first")
 
-    emp_html = emp_html[emp_html["SUP_NORM"].isin(valid_sup_norms)].copy()
+    emp_html = emp_html[emp_html["SUP_NORM"].isin(sup_map)].copy()
 
     emp_exact_sup_map = emp_html.set_index("EJ_NORM")["SUP_NORM"].to_dict()
     emp_exact_name_map = emp_html.set_index("EJ_NORM")["Nombre"].to_dict()
@@ -4582,7 +4586,7 @@ with tabs[9]:
         ventas_team["EJECUTIVO_norm"] = ventas_team["EJECUTIVO"].apply(normalize_name)
         ventas_team["Supervisor_norm"] = ventas_team["Supervisor"].apply(normalize_name)
 
-        ventas_team = ventas_team[ventas_team["Supervisor_norm"].isin(valid_sup_norms)].copy()
+        ventas_team = ventas_team[ventas_team["Supervisor_norm"].isin(sup_map)].copy()
 
         if not ventas_team.empty:
             ventas_team["FECHA_DE_CAPTURA_SORT"] = pd.to_datetime(ventas_team["FECHA DE CAPTURA"], errors="coerce")
@@ -4608,7 +4612,7 @@ with tabs[9]:
 
         det_tmp["EJ_NORM"] = det_tmp["Ejecutivo"].apply(normalize_name)
         det_tmp["SUP_NORM"] = det_tmp["Supervisor"].apply(normalize_name)
-        det_tmp = det_tmp[det_tmp["SUP_NORM"].isin(valid_sup_norms)].copy()
+        det_tmp = det_tmp[det_tmp["SUP_NORM"].isin(sup_map)].copy()
 
         if "Ventas" in det_tmp.columns:
             det_tmp["Ventas"] = pd.to_numeric(det_tmp["Ventas"], errors="coerce").fillna(0)
@@ -4649,14 +4653,16 @@ with tabs[9]:
 
     for sup_norm, sup_id in sup_map.items():
 
-        # --- INICIO DEL CAMBIO ---
-        # Igual que arriba, si el ID es de Maria Luisa, buscamos la meta de Maria Fernanda
+        # ✅ Primero usar la meta real del supervisor del Excel del mes.
+        # ✅ Solo si no existe y es Maria Luisa, usar Maria Fernanda como fallback.
         _lookup_norm = sup_norm
-        if _lookup_norm == ml_norm_html:
-            _lookup_norm = mf_norm_html
 
-        mv = metas_sup_map_html.get(_lookup_norm, 0)
-        # --- FIN DEL CAMBIO ---
+        if _lookup_norm in metas_sup_map_html:
+            mv = metas_sup_map_html[_lookup_norm]
+        elif _lookup_norm == ml_norm_html:
+            mv = metas_sup_map_html.get(mf_norm_html, 0)
+        else:
+            mv = 0
 
         try:
             meta_val = int(float(mv)) if pd.notna(mv) else 0
@@ -4681,7 +4687,7 @@ with tabs[9]:
         ventas_tmp["EJ_NORM"] = ventas_tmp["EJECUTIVO"].apply(normalize_name)
         ventas_tmp["SUP_NORM"] = ventas_tmp["Supervisor"].apply(normalize_name)
 
-        ventas_tmp = ventas_tmp[ventas_tmp["SUP_NORM"].isin(valid_sup_norms)].copy()
+        ventas_tmp = ventas_tmp[ventas_tmp["SUP_NORM"].isin(sup_map)].copy()
 
         ventas_agents_df = (
             ventas_tmp.groupby(["EJ_NORM", "SUP_NORM", "EJECUTIVO"], as_index=False)
@@ -4714,12 +4720,35 @@ with tabs[9]:
             }
         return agent_records[ej_norm]
 
-    # Seed from ventas reales first
+    # ✅ Seed from full employee roster first
+    # so all ejecutivos from each team appear,
+    # even if they have 0 ventas and 0 programación.
+    if not emp_html.empty:
+        emp_seed = emp_html[emp_html["SUP_NORM"].isin(sup_map)].copy()
+        emp_seed = emp_seed.sort_values(["SUP_NORM", "Nombre"], ascending=[True, True])
+        emp_seed = emp_seed.drop_duplicates(subset=["EJ_NORM"], keep="first")
+
+        for _, r in emp_seed.iterrows():
+            ej_norm = r["EJ_NORM"]
+            rec = ensure_agent(ej_norm)
+
+            if r["SUP_NORM"] in sup_map:
+                rec["sup_norm"] = r["SUP_NORM"]
+
+            rec["name"] = str(r["Nombre"]).strip() or rec["name"]
+
+            mv_seed = metas_map_html.get(ej_norm, 0)
+            try:
+                rec["meta"] = int(float(mv_seed)) if pd.notna(mv_seed) else int(rec["meta"] or 0)
+            except Exception:
+                pass
+
+    # Seed from ventas reales after roster
     if not ventas_agents_df.empty:
         for _, r in ventas_agents_df.iterrows():
             ej_norm = r["EJ_NORM"]
             rec = ensure_agent(ej_norm)
-            rec["sup_norm"] = r["SUP_NORM"] if r["SUP_NORM"] in valid_sup_norms else rec["sup_norm"]
+            rec["sup_norm"] = r["SUP_NORM"] if r["SUP_NORM"] in sup_map else rec["sup_norm"]
             rec["name"] = str(r["EJECUTIVO"]).strip() or rec["name"]
             rec["ventas"] = int(r["ventas"])
 
@@ -4731,7 +4760,7 @@ with tabs[9]:
         prog_assign["NAME_HTML"] = prog_assign["EJ_NORM"].map(emp_exact_name_map)
 
         # Fallback row-level where employee roster did not resolve
-        unresolved_mask = ~prog_assign["SUP_NORM_HTML"].isin(valid_sup_norms)
+        unresolved_mask = ~prog_assign["SUP_NORM_HTML"].isin(sup_map)
         if unresolved_mask.any():
             prog_unres = prog_assign.loc[unresolved_mask].copy()
             resolved_sup = []
@@ -4787,7 +4816,7 @@ with tabs[9]:
 
             df_pipeline = df_pipeline[
                 df_pipeline["HTML_Cat"].notna()
-                & df_pipeline["SUP_NORM_RESUELTO"].isin(valid_sup_norms)
+                & df_pipeline["SUP_NORM_RESUELTO"].isin(sup_map)
             ].copy()
 
             if not df_pipeline.empty:
@@ -4801,7 +4830,7 @@ with tabs[9]:
                     ej_norm = rr["EJ_NORM"]
                     rec = ensure_agent(ej_norm)
 
-                    if rr["SUP_NORM_RESUELTO"] in valid_sup_norms:
+                    if rr["SUP_NORM_RESUELTO"] in sup_map:
                         rec["sup_norm"] = rr["SUP_NORM_RESUELTO"]
 
                     if str(rr["NAME_RESUELTO"]).strip():
@@ -4830,7 +4859,7 @@ with tabs[9]:
             & (prog_assign["BO_DT"].notna())
             & (prog_assign["BO_Fecha"] >= interval_start)
             & (prog_assign["BO_Fecha"] <= interval_end)
-            & (prog_assign["SUP_NORM_RESUELTO"].isin(valid_sup_norms))
+            & (prog_assign["SUP_NORM_RESUELTO"].isin(sup_map))
         )
 
         backoffice_df = prog_assign.loc[mask_bo].copy()
@@ -4846,7 +4875,7 @@ with tabs[9]:
                 ej_norm = rr["EJ_NORM"]
                 rec = ensure_agent(ej_norm)
 
-                if rr["SUP_NORM_RESUELTO"] in valid_sup_norms:
+                if rr["SUP_NORM_RESUELTO"] in sup_map:
                     rec["sup_norm"] = rr["SUP_NORM_RESUELTO"]
 
                 if str(rr["NAME_RESUELTO"]).strip():
@@ -4858,14 +4887,14 @@ with tabs[9]:
     # ✅ Finalize agent records
     # ---------------------------------------------------------
     for ej_norm, rec in agent_records.items():
-        if rec["sup_norm"] not in valid_sup_norms:
+        if rec["sup_norm"] not in sup_map:
             # last fallback from ventas/detalle
             sup_norm_fallback = last_sup_by_ej.get(ej_norm) or sup_from_detalle.get(ej_norm)
-            if sup_norm_fallback in valid_sup_norms:
+            if sup_norm_fallback in sup_map:
                 rec["sup_norm"] = sup_norm_fallback
 
         # ✅ NUEVO: todo lo de Maria Luisa se manda al bucket de Maria Fernanda
-        if rec["sup_norm"] == ml_norm_html and mf_norm_html in valid_sup_norms:
+        if rec["sup_norm"] == ml_norm_html and mf_norm_html in sup_map:
             rec["sup_norm"] = mf_norm_html
 
         if not rec["name"]:
@@ -4889,11 +4918,11 @@ with tabs[9]:
         sup_norm = rec["sup_norm"]
 
         # ✅ NUEVO: todo lo de Maria Luisa se manda al bucket de Maria Fernanda
-        if sup_norm == ml_norm_html and mf_norm_html in valid_sup_norms:
+        if sup_norm == ml_norm_html and mf_norm_html in sup_map:
             sup_norm = mf_norm_html
             rec["sup_norm"] = sup_norm
 
-        if sup_norm not in valid_sup_norms:
+        if sup_norm not in sup_map:
             continue
 
         sup_id = sup_map[sup_norm]
