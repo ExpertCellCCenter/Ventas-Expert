@@ -4449,6 +4449,11 @@ with tabs[9]:
     # 2. Get dynamic strings for the period display
     current_period = mes_labels.get(mes_sel, str(mes_sel)).title()
     dias_restantes_val = float(dias_hab_restantes) if "dias_hab_restantes" in locals() else 0.0
+
+    # ✅ Solo para abril, alinear la Interfaz Custom con 22.5 días hábiles de mes
+    if int(mes_sel_int) % 100 == 4:
+        dias_transcurridos_custom = float(dias_hab_transcurridos) if "dias_hab_transcurridos" in locals() else 0.0
+        dias_restantes_val = max(0.0, 22.5 - dias_transcurridos_custom)
     
     if interval_start == interval_end:
         back_label = f"BACK {interval_start.strftime('%d/%m/%Y')}"
