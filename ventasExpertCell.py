@@ -2755,6 +2755,10 @@ with tabs[4]:
 
     dias_hab_total = workable_equiv_between(m_start, m_end)
 
+    # ✅ Solo para abril, fijar Días Hab Mes en 22.5
+    if int(mes_sel) % 100 == 4:
+        dias_hab_total = 22.5
+
     # Remaining days from today within the selected month
     if today < m_start:
         cutoff_start = m_start
