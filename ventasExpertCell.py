@@ -2753,11 +2753,7 @@ with tabs[4]:
     # ------------------------------------------------
     today = date.today()
 
-    dias_hab_total = workable_equiv_between(m_start, m_end)
-
-    # ✅ Solo para abril, fijar Días Hab Mes en 22.5
-    if int(mes_sel) % 100 == 4:
-        dias_hab_total = 22.5
+    dias_hab_total_real = workable_equiv_between(m_start, m_end)
 
     # Remaining days from today within the selected month
     if today < m_start:
@@ -2767,8 +2763,17 @@ with tabs[4]:
     else:
         cutoff_start = today
 
-    dias_hab_restantes = workable_equiv_between(cutoff_start, m_end)
-    dias_hab_transcurridos = float(max(0.0, dias_hab_total - dias_hab_restantes))
+    dias_hab_restantes_real = workable_equiv_between(cutoff_start, m_end)
+
+    # ✅ Solo para abril, fijar Días Hab Mes en 22.5
+    if int(mes_sel) % 100 == 4:
+        dias_hab_total = 22.5
+        dias_hab_transcurridos = float(max(0.0, dias_hab_total_real - dias_hab_restantes_real))
+        dias_hab_restantes = float(max(0.0, dias_hab_total - dias_hab_transcurridos))
+    else:
+        dias_hab_total = dias_hab_total_real
+        dias_hab_restantes = dias_hab_restantes_real
+        dias_hab_transcurridos = float(max(0.0, dias_hab_total - dias_hab_restantes))
 
     if dias_hab_total <= 0:
         dias_hab_total = 1.0
