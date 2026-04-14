@@ -2730,21 +2730,29 @@ with tabs[4]:
     
     transito_map = {}
     activadas_map = {}
-    
+
     if not prog_history.empty:
-        # Filter strictly by the month for Tab 5
-        mask_month = (prog_history["Fecha_Creacion_DT"] >= m_start) & (prog_history["Fecha_Creacion_DT"] <= m_end)
-        df_month = prog_history[mask_month].copy()
-        
+        # ✅ Use ALL fetched history for traceability, not only selected month
+        df_hist = prog_history.copy()
+
         # Calculate Transito Map
-        transito_mask = (df_month["Estatus_upper"].isin(['EN ENTREGA', 'EN PREPARACION', 'EN PREPARACIÓN', 'SOLICITADO', 'BACK OFFICE', 'BACKOFFICE', 'EN TRANSITO', 'EN TRÁNSITO'])) | ((df_month["Estatus_upper"] == 'ENTREGADO') & df_month["Venta_Vacia"])
-        if not df_month[transito_mask].empty:
-            transito_map = df_month[transito_mask].groupby("EJ_NORM").size().to_dict()
-            
+        transito_mask = (
+            df_hist["Estatus_upper"].isin([
+                'EN ENTREGA', 'EN PREPARACION', 'EN PREPARACIÓN',
+                'SOLICITADO', 'BACK OFFICE', 'BACKOFFICE',
+                'EN TRANSITO', 'EN TRÁNSITO'
+            ])
+        ) | (
+            (df_hist["Estatus_upper"] == 'ENTREGADO') & df_hist["Venta_Vacia"]
+        )
+
+        if not df_hist[transito_mask].empty:
+            transito_map = df_hist[transito_mask].groupby("EJ_NORM").size().to_dict()
+
         # Calculate Activadas Map
-        activadas_mask = (df_month["Estatus_upper"] == 'ENTREGADO') & (~df_month["Venta_Vacia"])
-        if not df_month[activadas_mask].empty:
-            activadas_map = df_month[activadas_mask].groupby("EJ_NORM").size().to_dict()
+        activadas_mask = (df_hist["Estatus_upper"] == 'ENTREGADO') & (~df_hist["Venta_Vacia"])
+        if not df_hist[activadas_mask].empty:
+            activadas_map = df_hist[activadas_mask].groupby("EJ_NORM").size().to_dict()
 
     metas_sup_map = load_metas_supervisor_from_excel(int(mes_sel))
 
@@ -4448,8 +4456,10 @@ with tabs[9]:
     else:
         m_end = m_end_full
         
-    interval_start = m_start
-    interval_end = m_end
+    # ✅ For En Transito traceability, use all fetched history
+    history_start = prog_history["Fecha_Creacion_DT"].min() if ("prog_history" in locals() and not prog_history.empty) else m_start
+    interval_start = history_start
+    interval_end = end_dt
 
     # 2. Get dynamic strings for the period display
     current_period = mes_labels.get(mes_sel, str(mes_sel)).title()
@@ -4652,6 +4662,11 @@ with tabs[9]:
     # ---------------------------------------------------------
     prog_history = fetch_programacion_history(end_dt)
 
+    # ✅ For En Transito traceability, use all fetched history instead of selected month only
+    history_start = prog_history["Fecha_Creacion_DT"].min() if not prog_history.empty else m_start
+    interval_start = history_start
+    interval_end = end_dt
+
     # base payload
     live_data_payload = {
         "diasRestantes": dias_restantes_val,
@@ -4811,10 +4826,8 @@ with tabs[9]:
         prog_assign["NAME_RESUELTO"] = prog_assign["NAME_HTML"]
 
         # ---------- Pipeline rows in selected month ----------
-        mask_pipeline = (
-            (prog_assign["Fecha_Creacion_DT"] >= interval_start)
-            & (prog_assign["Fecha_Creacion_DT"] <= interval_end)
-        )
+        # ✅ Use all history for En Transito traceability
+        mask_pipeline = prog_assign["Fecha_Creacion_DT"].notna()
         df_pipeline = prog_assign.loc[mask_pipeline].copy()
 
         if not df_pipeline.empty:
@@ -4871,8 +4884,8 @@ with tabs[9]:
         mask_bo = (
             (prog_assign["Estatus_upper"] != "CANC ERROR")
             & (prog_assign["BO_DT"].notna())
-            & (prog_assign["BO_Fecha"] >= interval_start)
-            & (prog_assign["BO_Fecha"] <= interval_end)
+            & (prog_assign["BO_Fecha"] >= m_start)
+            & (prog_assign["BO_Fecha"] <= m_end)
             & (prog_assign["SUP_NORM_RESUELTO"].isin(sup_map))
         )
 
