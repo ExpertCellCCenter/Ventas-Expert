@@ -4489,6 +4489,17 @@ with tabs[9]:
         ml_norm_html: "maria",
     }
 
+    # ✅ Ocultar solo en Interfaz Custom para María Luisa / bloque "maria"
+    HIDE_CUSTOM_MARIA = {
+        normalize_name("JESUS ABEL RODRIGUEZ ORTIZ"),
+        normalize_name("AURORA EUGENIA HURTAZO SERRANO"),
+        normalize_name("BELEN LOPEZ GONZALEZ"),
+        normalize_name("PATRICIA PEREZ PEREZ"),
+        normalize_name("JORGE MIGUEL UREÑA ZARATE"),
+        normalize_name("CARMEN RIVAS GONZALEZ"),
+        normalize_name("EMILIO RAFAEL CORNU AGUILAR"),
+    }
+
 
     # ---------------------------------------------------------
     # ✅ HELPERS
@@ -4953,6 +4964,10 @@ with tabs[9]:
             continue
 
         sup_id = sup_map[sup_norm]
+
+        # ✅ Ocultar solo en la Interfaz Custom dentro del bloque "maria"
+        if sup_id == "maria" and normalize_name(rec["name"]) in HIDE_CUSTOM_MARIA:
+            continue
 
         live_data_payload["agents"][sup_id].append(
             {
