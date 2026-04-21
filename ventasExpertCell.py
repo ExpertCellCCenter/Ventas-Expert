@@ -1219,16 +1219,12 @@ mes_sel = st.sidebar.selectbox(
 metas = load_metas_df(int(mes_sel))
 
 # ==========================================================
-# ✅ NUEVO: Mostrar el equipo de Maria Luisa SOLO en MARZO 2026
+# ✅ Mantener a Maria Luisa visible en el filtro de supervisores
 # ==========================================================
 ml_norm = normalize_name("MARIA LUISA MEZA GOEL")
 
-
-# 2. Ocultarla del menú desplegable si NO es Marzo 2026
-if int(mes_sel) != 202603:
-    ventas_filtros = ventas_filtros[ventas_filtros["Supervisor_norm"] != ml_norm].copy()
-else:
-    # 3. Si ES Marzo 2026, asegurarnos de que la BD no la elimine por decir "BAJA"
+# Si es marzo 2026, conservar este ajuste por si la BD la trae como BAJA
+if int(mes_sel) == 202603:
     empleados.loc[empleados["Nombre"].apply(normalize_name) == ml_norm, "Estatus"] = "ACTIVO"
 # ==========================================================
 
