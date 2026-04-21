@@ -1210,13 +1210,25 @@ for ym in ventas["AñoMes"].dropna().unique().tolist():
         mes_labels[ym] = month_key_to_name_es(ym)
 
 
-mes_sel = st.sidebar.selectbox(
+mes_opciones = ["Todos"] + meses_disponibles
+
+mes_choice = st.sidebar.selectbox(
     "Mes",
-    options=meses_disponibles,
-    format_func=lambda ym: mes_labels.get(ym, str(ym)),
-    index=len(meses_disponibles) - 1,
+    options=mes_opciones,
+    format_func=lambda x: "Todos" if x == "Todos" else mes_labels.get(x, str(x)),
+    index=len(mes_opciones) - 1,
 )
+
+mes_sel_all = mes_choice == "Todos"
+meses_sel = meses_disponibles if mes_sel_all else [int(mes_choice)]
+
+# Dejamos mes_sel como un solo mes para no romper el resto del código
+mes_sel = int(meses_sel[-1])
+
 metas = load_metas_df(int(mes_sel))
+
+# Texto opcional por si luego quieres mostrar el título correcto
+mes_title = "Todos los meses del intervalo" if mes_sel_all else mes_labels.get(mes_sel, str(mes_sel))
 
 # ==========================================================
 # ✅ Mantener a Maria Luisa visible en el filtro de supervisores
@@ -1254,7 +1266,7 @@ sub_sel = st.sidebar.multiselect("Subregión", options=subregs, default=[])
 
 # Filters (month + sidebar filters)
 df_base = ventas.copy()
-df_base = df_base[df_base["AñoMes"] == mes_sel]
+df_base = df_base[df_base["AñoMes"].isin(meses_sel)]
 if center_sel:
     df_base = df_base[df_base["CentroKey"].isin(center_sel)]
 if sup_sel:
