@@ -449,7 +449,7 @@ def load_empleados() -> pd.DataFrame:
       Operacion
     FROM reporte_empleado('EMPRESA_MAESTRA',1,'','') AS e
     WHERE
-      [Canal de Venta] IN ('ATT', 'IZZI')
+      [Canal de Venta] IN ('ATT')
       AND [Operacion] IN ('CONTACT CENTER')
       AND [Tipo Tienda] IN ('VIRTUAL')
       AND (
@@ -4508,6 +4508,12 @@ with tabs[9]:
         normalize_name("EMILIO RAFAEL CORNU AGUILAR"),
     }
 
+    HIDE_CUSTOM_JORGE = {
+        normalize_name("DIEGO GARCIA ZUÑIGA"),
+        normalize_name("ERIC DE JESUS MORENO"),
+        normalize_name("LUIS ALBERTO ROMANO MEJIA"),
+    }
+
 
     # ---------------------------------------------------------
     # ✅ HELPERS
@@ -4974,7 +4980,11 @@ with tabs[9]:
         sup_id = sup_map[sup_norm]
 
         # ✅ Ocultar solo en la Interfaz Custom dentro del bloque "maria"
-        if sup_id == "maria" and normalize_name(rec["name"]) in HIDE_CUSTOM_MARIA:
+        if (
+            (sup_id == "maria" and normalize_name(rec["name"]) in HIDE_CUSTOM_MARIA)
+            or
+            (sup_id == "jorge" and normalize_name(rec["name"]) in HIDE_CUSTOM_JORGE)
+        ):
             continue
 
         live_data_payload["agents"][sup_id].append(
