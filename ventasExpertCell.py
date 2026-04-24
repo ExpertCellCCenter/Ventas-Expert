@@ -501,12 +501,17 @@ def load_ventas(start_yyyymmdd: str, end_yyyymmdd: str) -> pd.DataFrame:
     df["EJECUTIVO"] = df["EJECUTIVO"].astype(str).str.strip()
     df["CENTRO"] = df["CENTRO"].astype(str).str.strip()
 
+    def fix_centro(c: str) -> str:
+        c_up = str(c).upper()
+        if "JUAREZ" in c_up:
+            return "EXP ATT C CENTER JUAREZ"
+        if "CENTER 2" in c_up:
+            return "EXP ATT C CENTER 2"
+        return c
+
     c = df["CENTRO"].astype(str).str.upper()
-    df["CENTRO"] = np.where(
-        c.str.contains("JUAREZ", na=False),
-        "EXP ATT C CENTER JUAREZ",
-        np.where(c.str.contains("CENTER 2", na=False), "EXP ATT C CENTER 2", df["CENTRO"])
-    )
+    df["CENTRO"] = np.where(c.str.contains("JUAREZ", na=False), "EXP ATT C CENTER JUAREZ",
+                     np.where(c.str.contains("CENTER 2", na=False), "EXP ATT C CENTER 2", df["CENTRO"]))
 
     df["EJECUTIVO"] = df["EJECUTIVO"].replace(
         {
@@ -537,56 +542,6 @@ def load_ventas(start_yyyymmdd: str, end_yyyymmdd: str) -> pd.DataFrame:
         df[col] = pd.to_numeric(df[col], errors="coerce")
 
     df["CentroKey"] = np.where(df["CENTRO"].str.upper().str.contains("JUAREZ", na=False), "JV", "CC2")
-
-    # ✅ ONLY ADD PHONE HERE
-    try:
-        q_tel = f"""
-        SELECT
-          [Folio],
-          [Telefono]
-        FROM reporte_programacion_entrega('empresa_maestra', 4, '{start_yyyymmdd}', '{end_yyyymmdd}')
-        WHERE [Tienda solicita] LIKE 'EXP ATT C CENTER%'
-        """
-
-        df_tel = read_sql(q_tel)
-
-        if df_tel is not None and not df_tel.empty:
-            df_tel["Folio_key"] = (
-                df_tel["Folio"]
-                .astype(str)
-                .str.strip()
-                .str.replace(r"\.0$", "", regex=True)
-            )
-
-            df_tel["Telefono cliente"] = df_tel["Telefono"].astype(str).str.strip()
-            df_tel["Telefono cliente"] = df_tel["Telefono cliente"].replace(
-                {"nan": "", "None": "", "NaT": ""}
-            )
-
-            df_tel["_prio"] = np.where(df_tel["Telefono cliente"].ne(""), 1, 0)
-
-            df_tel = (
-                df_tel.sort_values(["Folio_key", "_prio"], ascending=[True, False])
-                .drop_duplicates(subset=["Folio_key"], keep="first")
-                [["Folio_key", "Telefono cliente"]]
-                .copy()
-            )
-
-            df["_folio_key"] = (
-                df["FOLIO"]
-                .astype(str)
-                .str.strip()
-                .str.replace(r"\.0$", "", regex=True)
-            )
-
-            df = df.merge(df_tel, left_on="_folio_key", right_on="Folio_key", how="left")
-            df.drop(columns=["_folio_key", "Folio_key"], inplace=True, errors="ignore")
-        else:
-            df["Telefono cliente"] = ""
-
-    except Exception:
-        df["Telefono cliente"] = ""
-
     return df
 
 
@@ -1771,7 +1726,6 @@ with tabs[0]:
         # Optional: reorder / clean columns for export
         cols_order = [
             "FOLIO",
-            "Telefono cliente",
             "Fecha",
             "Hora",
             "EJECUTIVO",
