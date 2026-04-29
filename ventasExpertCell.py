@@ -4506,6 +4506,9 @@ with tabs[9]:
         normalize_name("JORGE MIGUEL UREÑA ZARATE"),
         normalize_name("CARMEN RIVAS GONZALEZ"),
         normalize_name("EMILIO RAFAEL CORNU AGUILAR"),
+        normalize_name("MARIA FERNANDA RIVERA LOPEZ"),
+        normalize_name("MARINA GOMEZ RAMIREZ"),
+        normalize_name("AARON CESPEDES GUTIERREZ"),
     }
 
     HIDE_CUSTOM_JORGE = {
