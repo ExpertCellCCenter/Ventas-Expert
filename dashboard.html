@@ -469,22 +469,97 @@ function getViewMembers() {
   }
 
   let supKeys;
-  if (role === 'coord') supKeys = ORG.coordinators[id].supervisors;
-  else supKeys = Object.keys(ORG.supervisors);
+  if (role === 'coord') supKeys = (ORG.coordinators[id]?.supervisors || []);
+  else supKeys = Object.keys(ORG.supervisors || {});
 
-  return supKeys.map(sk => {
-    const s = ORG.supervisors[sk];
-    const d = ORG.supData[sk] || {};
-    return {
-      key: sk,
-      name: s.name,
-      short: s.short,
-      meta: safeNum(s.meta),
-      data: normalizeDailyData(d)
-    };
-  });
+  return supKeys
+    .filter(sk => ORG.supervisors && ORG.supervisors[sk])
+    .map(sk => {
+      const s = ORG.supervisors[sk];
+      const d = ORG.supData[sk] || {};
+      return {
+        key: sk,
+        name: s.name,
+        short: s.short || s.name,
+        meta: safeNum(s.meta),
+        data: normalizeDailyData(d)
+      };
+    });
 }
 
+function escHtml(v) {
+  return String(v ?? '')
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#39;');
+}
+
+function renderLoginScreen() {
+  const card = document.querySelector('#loginScreen .login-card');
+  if (!card) return;
+
+  const coordEntries = Object.entries(ORG.coordinators || {});
+  const supEntries = Object.entries(ORG.supervisors || {});
+
+  const coordButtons = coordEntries.map(([cid, c]) => {
+    const names = (c.supervisors || [])
+      .filter(sid => ORG.supervisors && ORG.supervisors[sid])
+      .map(sid => ORG.supervisors[sid].short || ORG.supervisors[sid].name)
+      .join(', ');
+
+    return `<div class="login-btn coord" onclick="loginAs('coord','${escHtml(cid)}')">
+      <div class="role-tag">Coordinador${String(c.name || '').toLowerCase().includes('luisa') ? 'a' : ''}</div>
+      <div class="role-name">${escHtml(c.name)}</div>
+      <div class="role-sub">${escHtml(names || 'Sin supervisores')}</div>
+    </div>`;
+  }).join('');
+
+  const supervisorSections = coordEntries.map(([cid, c]) => {
+    const buttons = (c.supervisors || [])
+      .filter(sid => ORG.supervisors && ORG.supervisors[sid])
+      .map(sid => {
+        const s = ORG.supervisors[sid];
+        return `<div class="login-btn" onclick="loginAs('sup','${escHtml(sid)}')">
+          <div class="role-tag">Supervisor</div>
+          <div class="role-name">${escHtml(s.short || s.name)}</div>
+        </div>`;
+      }).join('');
+
+    if (!buttons) return '';
+    return `<div style="margin-bottom:16px">
+      <div style="font-size:10px;color:var(--accent);text-transform:uppercase;letter-spacing:1px;font-weight:700;margin-bottom:8px;text-align:left">Supervisores — Equipo ${escHtml(c.name)}</div>
+      <div class="login-grid">${buttons}</div>
+    </div>`;
+  }).join('');
+
+  card.innerHTML = `
+    <div class="icon">EC</div>
+    <h2>Sistema de Informes</h2>
+    <p>ExpertCell · Campaña AT&T Renovaciones<br>Selecciona tu perfil para comenzar</p>
+
+    <div style="margin-bottom:16px">
+      <div style="font-size:10px;color:var(--purple);text-transform:uppercase;letter-spacing:1px;font-weight:700;margin-bottom:8px;text-align:left">Coordinadores</div>
+      <div class="login-grid">${coordButtons}</div>
+    </div>
+
+    ${supervisorSections}
+
+    <div>
+      <div class="login-grid">
+        <div class="login-btn mgr" onclick="loginAs('mgr','jonathan')">
+          <div class="role-tag" style="color:var(--amber)">Sales Manager</div>
+          <div class="role-name">Jonathan</div>
+          <div class="role-sub">Vista completa — Todos los equipos</div>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+// ══════════════════════════════
+//  LOGIN
 // ══════════════════════════════
 //  LOGIN
 // ══════════════════════════════
@@ -1130,6 +1205,14 @@ async function downloadPDF() {
 function applyInjectedData(data) {
   if (!data) return;
 
+  if (data.coordinators) {
+    ORG.coordinators = data.coordinators;
+  }
+
+  if (data.supervisors) {
+    ORG.supervisors = data.supervisors;
+  }
+
   if (data.backLabel) {
     ORG.backLabel = data.backLabel;
   }
@@ -1168,6 +1251,7 @@ function applyInjectedData(data) {
   }
 
   syncSystemInputs();
+  renderLoginScreen();
 
   if (currentUser && typeof buildInputTable === 'function') {
     buildInputTable();
