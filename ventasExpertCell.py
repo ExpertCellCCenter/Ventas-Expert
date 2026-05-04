@@ -799,17 +799,44 @@ def load_metas_df(ym_int: int) -> pd.DataFrame:
             )
 
         # Supervisor metas from Excel (sum of exec metas)
-        sup_tot = tmp.groupby([col_cent, col_sup], as_index=False)[col_meta].sum()
+        # ✅ FIX: a supervisor can have executive rows split across CentroKey
+        # (example: CARMEN RIVAS GONZALEZ has JV + CC2 rows). For the
+        # supervisor card we need ONE total meta per supervisor, while keeping
+        # the center where most of that supervisor's meta belongs for display.
+        tmp["_META_SUP"] = tmp[col_sup].astype(str).str.strip()
+        tmp["_META_CENTRO"] = tmp[col_cent].astype(str).str.strip().str.upper()
+
+        sup_base = tmp[
+            (tmp["_META_SUP"] != "")
+            & (tmp["_META_SUP"].apply(_metas_norm_txt) != "capacitacion")
+        ].copy()
+
+        sup_tot = (
+            sup_base.groupby("_META_SUP", as_index=False)[col_meta]
+            .sum()
+            .rename(columns={col_meta: "_META_TOTAL"})
+        )
+
+        sup_center = (
+            sup_base.groupby(["_META_SUP", "_META_CENTRO"], as_index=False)[col_meta]
+            .sum()
+            .sort_values(["_META_SUP", col_meta], ascending=[True, False])
+            .drop_duplicates("_META_SUP", keep="first")
+            [["_META_SUP", "_META_CENTRO"]]
+        )
+
+        sup_tot = sup_tot.merge(sup_center, on="_META_SUP", how="left")
+
         for i, rr in sup_tot.iterrows():
-            cent = str(rr[col_cent]).strip().upper()
-            sup = str(rr[col_sup]).strip()
+            cent = str(rr["_META_CENTRO"]).strip().upper()
+            sup = str(rr["_META_SUP"]).strip()
             rows.append(
                 {
                     "IDCenter": f"{cent}_SUP{i+1}",
                     "Nivel": "Supervisor",
                     "Nombre": sup,
                     "Centro": cent,
-                    "Meta": float(rr[col_meta] or 0),
+                    "Meta": float(rr["_META_TOTAL"] or 0),
                 }
             )
 
@@ -3636,22 +3663,40 @@ with tabs[7]:
     active_supervisores_norm = set(emp_sup["Supervisor_norm"].dropna().tolist())
 
     # ==========================================================
-    # ✅ Mostrar a Maria Luisa en Metas siempre que venga en el Excel del mes
+    # ✅ Mostrar en Metas a supervisores/as que vienen en el Excel del mes
+    # aunque todavía no aparezcan como SUPERV activo en empleados.
+    # Esto permite que ANA PAOLA DE LA FUENTE GUARNEROS aparezca en CC2.
     # ==========================================================
-    ml_norm_meta = normalize_name("MARIA LUISA MEZA GOEL")
-    ml_has_meta_this_month = (
-        not metas_sup.empty
-        and ml_norm_meta in set(metas_sup["Nombre_norm"].astype(str))
-    )
+    if not metas_sup.empty:
+        metas_sup_extra = metas_sup.copy()
+        metas_sup_extra["Centro"] = metas_sup_extra["Centro"].astype(str).str.strip().str.upper()
+        metas_sup_extra["Meta"] = pd.to_numeric(metas_sup_extra["Meta"], errors="coerce").fillna(0)
 
-    if ml_has_meta_this_month and ml_norm_meta not in active_supervisores_norm:
-        nueva_fila = pd.DataFrame([{
-            "Supervisor": "MARIA LUISA MEZA GOEL",
-            "Supervisor_norm": ml_norm_meta,
-            "CentroKey": "JV"
-        }])
-        emp_sup = pd.concat([emp_sup, nueva_fila], ignore_index=True)
-        active_supervisores_norm.add(ml_norm_meta)
+        # Only supervisors with real monthly meta should be rescued.
+        metas_sup_extra = metas_sup_extra[metas_sup_extra["Meta"] > 0].copy()
+
+        # Keep the same exclusions already applied to the active-supervisor roster.
+        metas_sup_extra = metas_sup_extra[metas_sup_extra["Nombre_norm"] != _YARELI_NORM].copy()
+        metas_sup_extra["FirstName"] = metas_sup_extra["Nombre_norm"].astype(str).str.split().str[0]
+        metas_sup_extra = metas_sup_extra[metas_sup_extra["FirstName"] != "JULIO"].copy()
+        metas_sup_extra.drop(columns=["FirstName"], inplace=True, errors="ignore")
+
+        if center_sel:
+            metas_sup_extra = metas_sup_extra[metas_sup_extra["Centro"].isin([c.upper() for c in center_sel])].copy()
+
+        if sup_norm_filter:
+            metas_sup_extra = metas_sup_extra[metas_sup_extra["Nombre_norm"].isin(sup_norm_filter)].copy()
+
+        for _, rr in metas_sup_extra.iterrows():
+            sup_norm_x = str(rr["Nombre_norm"]).strip()
+            if sup_norm_x and sup_norm_x not in active_supervisores_norm:
+                nueva_fila = pd.DataFrame([{
+                    "Supervisor": str(rr["Nombre"]).strip(),
+                    "Supervisor_norm": sup_norm_x,
+                    "CentroKey": str(rr["Centro"]).strip().upper(),
+                }])
+                emp_sup = pd.concat([emp_sup, nueva_fila], ignore_index=True)
+                active_supervisores_norm.add(sup_norm_x)
     # ==========================================================
 
     metas_sup_show = metas_sup[metas_sup["Nombre_norm"].isin(active_supervisores_norm)].copy()
@@ -3783,7 +3828,9 @@ with tabs[7]:
                     ]
 
                 if not mrow.empty:
-                    mv = pd.to_numeric(mrow["Meta"].iloc[0], errors="coerce")
+                    # ✅ FIX: if the same supervisor appears in more than one CentroKey
+                    # in the metas Excel, use the full supervisor total.
+                    mv = pd.to_numeric(mrow["Meta"], errors="coerce").fillna(0).sum()
                     meta_val = float(mv) if pd.notna(mv) else np.nan
 
                 faltan = (meta_val - achieved) if pd.notna(meta_val) else np.nan
@@ -4483,40 +4530,219 @@ with tabs[9]:
     else:
         back_label = f"BACK {interval_start.strftime('%d/%m/%Y')} → {interval_end.strftime('%d/%m/%Y')}"
 
-    # 3. Map SQL supervisor names -> HTML IDs
+    # 3. Build supervisor names/IDs dynamically from the same metas source
+    #    used by the Streamlit dashboard, so Interfaz Custom stays aligned.
     mf_norm_html = normalize_name("MARIA FERNANDA MARTINEZ BISTRAIN")
     ml_norm_html = normalize_name("MARIA LUISA MEZA GOEL")
 
-    sup_map = {
+    _FIXED_SUP_IDS = {
         normalize_name("REYNA LIZZETTE MARTINEZ GARCIA"): "reyna",
         normalize_name("ALAN UZIEL SALAZAR AGUILAR"): "alan",
         normalize_name("CARLOS ALBERTO AGUILAR CANO"): "carlos",
         normalize_name("ALFREDO CABRERA PADRON"): "alfredo",
         normalize_name("JORGE MIGUEL UREÑA ZARATE"): "jorge",
-        mf_norm_html: "maria",
-        ml_norm_html: "maria",
+        normalize_name("ANA PAOLA DE LA FUENTE GUARNEROS"): "ana_paola",
+        normalize_name("EMILIO RAFAEL CORNU AGUILAR"): "emilio",
+        normalize_name("CARMEN RIVAS GONZALEZ"): "carmen",
+        normalize_name("MARIA FERNANDA MARTINEZ BISTRAIN"): "maria_fernanda",
     }
 
-    # ✅ Ocultar solo en Interfaz Custom para María Luisa / bloque "maria"
-    HIDE_CUSTOM_MARIA = {
-        normalize_name("JESUS ABEL RODRIGUEZ ORTIZ"),
-        normalize_name("AURORA EUGENIA HURTAZO SERRANO"),
-        normalize_name("BELEN LOPEZ GONZALEZ"),
-        normalize_name("PATRICIA PEREZ PEREZ"),
-        normalize_name("JORGE MIGUEL UREÑA ZARATE"),
-        normalize_name("CARMEN RIVAS GONZALEZ"),
-        normalize_name("EMILIO RAFAEL CORNU AGUILAR"),
-        normalize_name("MARIA FERNANDA RIVERA LOPEZ"),
-        normalize_name("MARINA GOMEZ RAMIREZ"),
-        normalize_name("AARON CESPEDES GUTIERREZ"),
+    _SKIP_SUP_NORMS_HTML = {
+        normalize_name(""),
+        normalize_name("BAJA"),
+        normalize_name("CAPACITACION"),
+        normalize_name("CAPACITACIÓN"),
+        normalize_name("SIN SUPERVISOR"),
+        normalize_name("SIN STAFF"),
+        normalize_name("SIN SUPERVISOR JV"),
+        normalize_name("EDUARDO AGUILA SANCHEZ"),
+        normalize_name("MARIA LUISA MEZA GOEL"),  # Luisa is coordinator for JV
     }
 
-    HIDE_CUSTOM_JORGE = {
-        normalize_name("DIEGO GARCIA ZUÑIGA"),
-        normalize_name("ERIC DE JESUS MORENO"),
-        normalize_name("LUIS ALBERTO ROMANO MEJIA"),
+    def _html_center_to_coord(center_value: str) -> str:
+        c = str(center_value or "").strip().upper()
+        if c == "JV" or "JUAREZ" in c:
+            return "luisa"
+        return "eduardo"
+
+    def _html_short_name(name: str) -> str:
+        parts = [p for p in normalize_name(name).title().split() if p]
+        if not parts:
+            return str(name or "").strip()
+        if len(parts) == 1:
+            return parts[0]
+        # first name + first surname initial for compact chart labels
+        return f"{parts[0]} {parts[1][0]}."
+
+    def _html_sup_id(name: str, used_ids: dict[str, str]) -> str:
+        norm = normalize_name(name)
+        base = _FIXED_SUP_IDS.get(norm)
+        if not base:
+            base = _metas_norm_txt(name)
+            base = re.sub(r"[^a-z0-9]+", "_", base).strip("_")
+            if not base:
+                base = "supervisor"
+            if base[0].isdigit():
+                base = f"sup_{base}"
+
+        sid = base
+        i = 2
+        while sid in used_ids and used_ids[sid] != norm:
+            sid = f"{base}_{i}"
+            i += 1
+        used_ids[sid] = norm
+        return sid
+
+    def _add_sup_candidate(store: dict, name: str, center: str, meta: float = 0):
+        name = str(name or "").strip()
+        sup_norm = normalize_name(name)
+        if not sup_norm or sup_norm in _SKIP_SUP_NORMS_HTML:
+            return
+        if sup_norm not in store:
+            store[sup_norm] = {"name": name, "center": str(center or "").strip().upper(), "meta": 0.0}
+        if not store[sup_norm].get("center") and center:
+            store[sup_norm]["center"] = str(center).strip().upper()
+        try:
+            store[sup_norm]["meta"] += float(meta or 0)
+        except Exception:
+            pass
+
+    # --- 3A) Supervisor roster from load_metas_df() already loaded by the dashboard
+    supervisor_candidates: dict[str, dict] = {}
+    if isinstance(metas, pd.DataFrame) and not metas.empty:
+        _m_sup = metas.copy()
+        _m_sup["Nivel"] = _m_sup["Nivel"].astype(str).str.strip().str.upper()
+        _m_sup = _m_sup[_m_sup["Nivel"] == "SUPERVISOR"].copy()
+        for _, _r in _m_sup.iterrows():
+            _add_sup_candidate(
+                supervisor_candidates,
+                _r.get("Nombre", ""),
+                _r.get("Centro", ""),
+                _r.get("Meta", 0),
+            )
+
+    # --- 3B) Also read the raw metas Excel to capture every supervisor/agent exactly
+    #         as it appears in the metas tab, including new supervisors.
+    raw_metas_html = pd.DataFrame()
+    col_ej_html = col_sup_html = col_cent_html = col_meta_html = None
+    metas_exec_sup_map: dict[str, str] = {}
+    metas_exec_name_map: dict[str, str] = {}
+    metas_exec_meta_map: dict[str, float] = {}
+
+    try:
+        raw_metas_html = _load_metas_excel_df(int(mes_sel))
+        if raw_metas_html is not None and not raw_metas_html.empty:
+            col_ej_html = _metas_pick_col(raw_metas_html, ["EJECUTIVO", "Ejecutivo"])
+            col_sup_html = _metas_pick_col(raw_metas_html, ["Supervisor", "SUPERVISOR"])
+            col_cent_html = _metas_pick_col(raw_metas_html, ["Centro", "CENTRO"])
+            col_meta_html = _metas_pick_meta_month_col(raw_metas_html, int(mes_sel))
+
+            if col_sup_html:
+                _raw_sup = raw_metas_html.copy()
+                _raw_sup[col_sup_html] = _raw_sup[col_sup_html].astype(str).str.strip()
+
+                if col_cent_html:
+                    _raw_sup[col_cent_html] = _raw_sup[col_cent_html].astype(str).str.strip().str.upper()
+                else:
+                    _raw_sup["_CENTRO_HTML"] = "CC2"
+                    col_cent_html = "_CENTRO_HTML"
+
+                if col_meta_html:
+                    _raw_sup[col_meta_html] = pd.to_numeric(_raw_sup[col_meta_html], errors="coerce").fillna(0)
+                else:
+                    _raw_sup["_META_HTML"] = 0
+                    col_meta_html = "_META_HTML"
+
+                _raw_sup = _raw_sup[
+                    _raw_sup[col_sup_html].astype(str).str.strip().ne("")
+                    & (_raw_sup[col_sup_html].apply(normalize_name).isin(_SKIP_SUP_NORMS_HTML) == False)
+                ].copy()
+
+                if not _raw_sup.empty:
+                    _sup_center_pref = (
+                        _raw_sup.groupby([col_sup_html, col_cent_html], as_index=False)[col_meta_html]
+                        .sum()
+                        .sort_values([col_sup_html, col_meta_html], ascending=[True, False])
+                        .drop_duplicates(col_sup_html, keep="first")
+                    )
+                    for _, _r in _sup_center_pref.iterrows():
+                        _add_sup_candidate(
+                            supervisor_candidates,
+                            _r.get(col_sup_html, ""),
+                            _r.get(col_cent_html, ""),
+                            _r.get(col_meta_html, 0),
+                        )
+    except Exception:
+        raw_metas_html = pd.DataFrame()
+
+    # --- 3C) Fallback only if the Excel/metas source is unavailable
+    if not supervisor_candidates:
+        for _r in METAS_MANUAL_ROWS:
+            if str(_r.get("Nivel", "")).strip().lower() == "supervisor":
+                _add_sup_candidate(
+                    supervisor_candidates,
+                    _r.get("Nombre", ""),
+                    _r.get("Centro", ""),
+                    _r.get("Meta", 0),
+                )
+
+    # --- 3D) Build final dynamic ORG pieces for HTML
+    used_sup_ids: dict[str, str] = {}
+    sup_map: dict[str, str] = {}
+    supervisors_payload: dict[str, dict] = {}
+    coordinators_payload = {
+        "eduardo": {"name": "Eduardo", "color": "#3AA5DC", "supervisors": []},
+        "luisa": {"name": "Luisa", "color": "#FCB314", "supervisors": []},
     }
 
+    def _sup_sort_key(item):
+        _norm, _rec = item
+        coord = _html_center_to_coord(_rec.get("center", ""))
+        coord_order = 0 if coord == "eduardo" else 1
+        return (coord_order, str(_rec.get("name", "")))
+
+    for _sup_norm, _rec in sorted(supervisor_candidates.items(), key=_sup_sort_key):
+        _sid = _html_sup_id(_rec["name"], used_sup_ids)
+        _coord = _html_center_to_coord(_rec.get("center", ""))
+        sup_map[_sup_norm] = _sid
+        supervisors_payload[_sid] = {
+            "name": str(_rec.get("name", "")).strip(),
+            "short": _html_short_name(_rec.get("name", "")),
+            "coord": _coord,
+            "meta": int(float(_rec.get("meta", 0) or 0)),
+        }
+        coordinators_payload[_coord]["supervisors"].append(_sid)
+
+    # --- 3E) Executive -> supervisor map directly from metas Excel.
+    #         This is the key alignment with the Metas tab.
+    if raw_metas_html is not None and not raw_metas_html.empty and col_ej_html and col_sup_html:
+        _metas_exec = raw_metas_html.copy()
+        _metas_exec[col_ej_html] = _metas_exec[col_ej_html].astype(str).str.strip()
+        _metas_exec[col_sup_html] = _metas_exec[col_sup_html].astype(str).str.strip()
+        _metas_exec["EJ_NORM"] = _metas_exec[col_ej_html].apply(normalize_name)
+        _metas_exec["SUP_NORM"] = _metas_exec[col_sup_html].apply(normalize_name)
+        _metas_exec = _metas_exec[
+            _metas_exec["EJ_NORM"].ne("")
+            & _metas_exec["SUP_NORM"].isin(sup_map)
+        ].copy()
+
+        if col_meta_html and col_meta_html in _metas_exec.columns:
+            _metas_exec[col_meta_html] = pd.to_numeric(_metas_exec[col_meta_html], errors="coerce").fillna(0)
+        else:
+            _metas_exec["_META_HTML"] = 0
+            col_meta_html = "_META_HTML"
+
+        if not _metas_exec.empty:
+            # If an executive appears more than once, keep the row with the highest meta.
+            _metas_exec = _metas_exec.sort_values(["EJ_NORM", col_meta_html], ascending=[True, False])
+            _metas_exec = _metas_exec.drop_duplicates(subset=["EJ_NORM"], keep="first")
+            metas_exec_sup_map = _metas_exec.set_index("EJ_NORM")["SUP_NORM"].to_dict()
+            metas_exec_name_map = _metas_exec.set_index("EJ_NORM")[col_ej_html].to_dict()
+            metas_exec_meta_map = _metas_exec.set_index("EJ_NORM")[col_meta_html].to_dict()
+
+    # ✅ No manual hidden agents in custom interface: show the same agents as dashboard/metas.
+    HIDE_CUSTOM_MARIA = set()
+    HIDE_CUSTOM_JORGE = set()
 
     # ---------------------------------------------------------
     # ✅ HELPERS
@@ -4614,6 +4840,11 @@ with tabs[9]:
     emp_exact_sup_map = emp_html.set_index("EJ_NORM")["SUP_NORM"].to_dict()
     emp_exact_name_map = emp_html.set_index("EJ_NORM")["Nombre"].to_dict()
 
+    # ✅ Metas Excel is the first source of truth for agent-supervisor assignment.
+    #    Employee roster remains as fallback for names not present in metas.
+    emp_exact_sup_map = {**emp_exact_sup_map, **metas_exec_sup_map}
+    emp_exact_name_map = {**emp_exact_name_map, **metas_exec_name_map}
+
     emp_roster_records = []
     for _, r in emp_html.iterrows():
         emp_roster_records.append(
@@ -4700,6 +4931,8 @@ with tabs[9]:
         "diasRestantes": dias_restantes_val,
         "periodo": current_period,
         "backLabel": back_label,
+        "coordinators": coordinators_payload,
+        "supervisors": supervisors_payload,
         "supData": {k: {"ventas": 0, "backFeb": 0, "entrega": 0, "prep": 0, "solic": 0, "backoff": 0, "sinventa": 0} for k in sup_map.values()},
         "agents": {k: [] for k in sup_map.values()},
         "supMetas": {},
@@ -4709,29 +4942,16 @@ with tabs[9]:
     metas_sup_map_html = load_metas_supervisor_from_excel(int(mes_sel))
 
     for sup_norm, sup_id in sup_map.items():
-
-        # ✅ Primero usar la meta real del supervisor del Excel del mes.
-        # ✅ Solo si no existe y es Maria Luisa, usar Maria Fernanda como fallback.
-        _lookup_norm = sup_norm
-
-        if _lookup_norm in metas_sup_map_html:
-            mv = metas_sup_map_html[_lookup_norm]
-        elif _lookup_norm == ml_norm_html:
-            mv = metas_sup_map_html.get(mf_norm_html, 0)
-        else:
-            mv = 0
+        mv = metas_sup_map_html.get(sup_norm, supervisors_payload.get(sup_id, {}).get("meta", 0))
 
         try:
             meta_val = int(float(mv)) if pd.notna(mv) else 0
         except Exception:
             meta_val = 0
 
-        # ✅ Si dos supervisoras caen en el mismo bloque HTML ("maria"),
-        # conservar la meta válida más alta y no sobrescribirla.
-        live_data_payload["supMetas"][sup_id] = max(
-            int(live_data_payload["supMetas"].get(sup_id, 0)),
-            meta_val,
-        )
+        live_data_payload["supMetas"][sup_id] = meta_val
+        if sup_id in live_data_payload["supervisors"]:
+            live_data_payload["supervisors"][sup_id]["meta"] = meta_val
 
     # ---------------------------------------------------------
     # ✅ TRUE SALES (from ventas dashboard month selection)
@@ -4777,6 +4997,24 @@ with tabs[9]:
             }
         return agent_records[ej_norm]
 
+    # ✅ Seed from metas Excel first so the custom interface shows the
+    #    same agents and supervisor assignment as the Metas tab.
+    #    Global/empleados can complement metrics or add missing agents,
+    #    but they must NOT move an agent already assigned by metas.
+    metas_agent_norms = set(metas_exec_sup_map.keys())
+
+    for ej_norm, sup_norm in metas_exec_sup_map.items():
+        if sup_norm not in sup_map:
+            continue
+        rec = ensure_agent(ej_norm)
+        rec["sup_norm"] = sup_norm
+        rec["name"] = str(metas_exec_name_map.get(ej_norm, "")).strip() or rec["name"]
+        rec["source"] = "metas"
+        try:
+            rec["meta"] = int(float(metas_exec_meta_map.get(ej_norm, 0) or 0))
+        except Exception:
+            rec["meta"] = int(rec.get("meta", 0) or 0)
+
     # ✅ Seed from full employee roster first
     # so all ejecutivos from each team appear,
     # even if they have 0 ventas and 0 programación.
@@ -4789,14 +5027,20 @@ with tabs[9]:
             ej_norm = r["EJ_NORM"]
             rec = ensure_agent(ej_norm)
 
-            if r["SUP_NORM"] in sup_map:
-                rec["sup_norm"] = r["SUP_NORM"]
+            # If the agent exists in metas, keep the metas supervisor/name exactly.
+            # Empleados only complements agents that are not present in metas.
+            if ej_norm not in metas_agent_norms:
+                if r["SUP_NORM"] in sup_map:
+                    rec["sup_norm"] = r["SUP_NORM"]
+                rec["name"] = str(r["Nombre"]).strip() or rec["name"]
+                rec["source"] = rec.get("source") or "empleados"
+            else:
+                rec["name"] = rec["name"] or str(r["Nombre"]).strip()
 
-            rec["name"] = str(r["Nombre"]).strip() or rec["name"]
-
-            mv_seed = metas_map_html.get(ej_norm, 0)
+            mv_seed = metas_map_html.get(ej_norm, rec.get("meta", 0))
             try:
-                rec["meta"] = int(float(mv_seed)) if pd.notna(mv_seed) else int(rec["meta"] or 0)
+                if pd.notna(mv_seed) and float(mv_seed or 0) > 0:
+                    rec["meta"] = int(float(mv_seed))
             except Exception:
                 pass
 
@@ -4805,8 +5049,16 @@ with tabs[9]:
         for _, r in ventas_agents_df.iterrows():
             ej_norm = r["EJ_NORM"]
             rec = ensure_agent(ej_norm)
-            rec["sup_norm"] = r["SUP_NORM"] if r["SUP_NORM"] in sup_map else rec["sup_norm"]
-            rec["name"] = str(r["EJECUTIVO"]).strip() or rec["name"]
+
+            # Global sales complements the agent list and metrics.
+            # For agents already in metas, keep the metas supervisor assignment.
+            if ej_norm not in metas_agent_norms:
+                rec["sup_norm"] = r["SUP_NORM"] if r["SUP_NORM"] in sup_map else rec["sup_norm"]
+                rec["name"] = str(r["EJECUTIVO"]).strip() or rec["name"]
+                rec["source"] = rec.get("source") or "global"
+            else:
+                rec["name"] = rec["name"] or str(r["EJECUTIVO"]).strip()
+
             rec["ventas"] = int(r["ventas"])
 
     if not prog_history.empty:
@@ -4885,11 +5137,16 @@ with tabs[9]:
                     ej_norm = rr["EJ_NORM"]
                     rec = ensure_agent(ej_norm)
 
-                    if rr["SUP_NORM_RESUELTO"] in sup_map:
-                        rec["sup_norm"] = rr["SUP_NORM_RESUELTO"]
+                    # Programación/Global metrics should not move agents already assigned by metas.
+                    if ej_norm not in metas_agent_norms:
+                        if rr["SUP_NORM_RESUELTO"] in sup_map:
+                            rec["sup_norm"] = rr["SUP_NORM_RESUELTO"]
 
-                    if str(rr["NAME_RESUELTO"]).strip():
-                        rec["name"] = str(rr["NAME_RESUELTO"]).strip()
+                        if str(rr["NAME_RESUELTO"]).strip():
+                            rec["name"] = str(rr["NAME_RESUELTO"]).strip()
+                            rec["source"] = rec.get("source") or "global"
+                    else:
+                        rec["name"] = rec["name"] or str(rr["NAME_RESUELTO"]).strip()
 
                     cat = str(rr["HTML_Cat"]).strip()
                     n = int(rr["n"])
@@ -4930,11 +5187,16 @@ with tabs[9]:
                 ej_norm = rr["EJ_NORM"]
                 rec = ensure_agent(ej_norm)
 
-                if rr["SUP_NORM_RESUELTO"] in sup_map:
-                    rec["sup_norm"] = rr["SUP_NORM_RESUELTO"]
+                # Programación/Global metrics should not move agents already assigned by metas.
+                if ej_norm not in metas_agent_norms:
+                    if rr["SUP_NORM_RESUELTO"] in sup_map:
+                        rec["sup_norm"] = rr["SUP_NORM_RESUELTO"]
 
-                if str(rr["NAME_RESUELTO"]).strip():
-                    rec["name"] = str(rr["NAME_RESUELTO"]).strip()
+                    if str(rr["NAME_RESUELTO"]).strip():
+                        rec["name"] = str(rr["NAME_RESUELTO"]).strip()
+                        rec["source"] = rec.get("source") or "global"
+                else:
+                    rec["name"] = rec["name"] or str(rr["NAME_RESUELTO"]).strip()
 
                 rec["backFeb"] += int(rr["backFeb"])
 
@@ -4948,9 +5210,7 @@ with tabs[9]:
             if sup_norm_fallback in sup_map:
                 rec["sup_norm"] = sup_norm_fallback
 
-        # ✅ NUEVO: todo lo de Maria Luisa se manda al bucket de Maria Fernanda
-        if rec["sup_norm"] == ml_norm_html and mf_norm_html in sup_map:
-            rec["sup_norm"] = mf_norm_html
+        # ✅ Keep supervisor assignment exactly as resolved from metas/employee data.
 
         if not rec["name"]:
             rec["name"] = (
@@ -4960,11 +5220,12 @@ with tabs[9]:
                 or str(ej_norm).strip()
             )
 
-        mv = metas_map_html.get(ej_norm, meta_from_detalle.get(ej_norm, 0))
+        # Meta priority: Excel metas first, then dashboard metas map, then Detalle fallback.
+        mv = metas_exec_meta_map.get(ej_norm, metas_map_html.get(ej_norm, meta_from_detalle.get(ej_norm, rec.get("meta", 0))))
         try:
-            rec["meta"] = int(float(mv)) if pd.notna(mv) else 0
+            rec["meta"] = int(float(mv)) if pd.notna(mv) else int(rec.get("meta", 0) or 0)
         except Exception:
-            rec["meta"] = 0
+            rec["meta"] = int(rec.get("meta", 0) or 0)
 
     # ---------------------------------------------------------
     # ✅ Push agents into payload
@@ -4972,10 +5233,7 @@ with tabs[9]:
     for ej_norm, rec in agent_records.items():
         sup_norm = rec["sup_norm"]
 
-        # ✅ NUEVO: todo lo de Maria Luisa se manda al bucket de Maria Fernanda
-        if sup_norm == ml_norm_html and mf_norm_html in sup_map:
-            sup_norm = mf_norm_html
-            rec["sup_norm"] = sup_norm
+        # ✅ Keep supervisor assignment exactly as resolved from metas/employee data.
 
         if sup_norm not in sup_map:
             continue
