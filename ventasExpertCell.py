@@ -2745,6 +2745,8 @@ with tabs[4]:
         "ANTONIO HERNAN GOMEZ OLVERA",
         "JONATHAN ARTURO TENORIO DEL AGUILA",
         "NELLY MASHIEL CAMPOS JUAREZ",
+        "ANGELES ROCIO LUIS BUSTAMANTE",
+        "CRISTIAN HERNANDEZ PEREZ",
     ]
     _BOSS_SUP_NORMS = set(normalize_name(x) for x in _BOSS_SUPS)
 
