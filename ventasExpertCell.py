@@ -4745,6 +4745,7 @@ with tabs[9]:
     # ✅ No manual hidden agents in custom interface: show the same agents as dashboard/metas.
     HIDE_CUSTOM_MARIA = set()
     HIDE_CUSTOM_JORGE = set()
+    HIDE_CUSTOM_AGENTS_GLOBAL = {normalize_name("JORGE QUEZADA ALVAREZ")}
 
     # ---------------------------------------------------------
     # ✅ HELPERS
@@ -5244,6 +5245,8 @@ with tabs[9]:
 
         # ✅ Ocultar solo en la Interfaz Custom dentro del bloque "maria"
         if (
+            normalize_name(rec["name"]) in HIDE_CUSTOM_AGENTS_GLOBAL
+            or
             (sup_id == "maria" and normalize_name(rec["name"]) in HIDE_CUSTOM_MARIA)
             or
             (sup_id == "jorge" and normalize_name(rec["name"]) in HIDE_CUSTOM_JORGE)
