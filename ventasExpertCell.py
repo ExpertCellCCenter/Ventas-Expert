@@ -5,6 +5,7 @@ import json
 import zlib
 import unicodedata
 from datetime import datetime, date
+from zoneinfo import ZoneInfo
 
 from io import BytesIO  # ✅ ADDED (Excel download)
 
@@ -39,6 +40,68 @@ st.set_page_config(
 # -------------------------------
 EXCLUDED_VENDOR = "ABASTECEDORA Y SUMINISTROS ORTEGA/ISABEL VALDEZ JIMENEZ"
 
+# ✅ UPDATED: fixed scheduled refreshes in Mexico City time.
+# The cache key changes only at these 5 update windows, so the dashboard
+# does NOT query/update in real time and does not depend on the server timezone.
+MEXICO_TZ = ZoneInfo("America/Mexico_City")
+UPDATE_TIMES_MX = [(9, 0), (13, 0), (16, 0), (19, 0), (20, 30)]
+DATA_REFRESH_TTL_SECONDS = 60 * 60 * 48  # keep slot cache long enough; slot key controls refresh
+
+def now_mx() -> datetime:
+    return datetime.now(MEXICO_TZ)
+
+def today_mx() -> date:
+    return now_mx().date()
+
+def _slot_dt_mx(day_value: date, hour: int, minute: int) -> datetime:
+    return datetime(
+        day_value.year,
+        day_value.month,
+        day_value.day,
+        hour,
+        minute,
+        tzinfo=MEXICO_TZ,
+    )
+
+def get_refresh_window_mx(now_value: datetime | None = None) -> tuple[datetime, datetime]:
+    now_value = now_value or now_mx()
+    today_value = now_value.date()
+    today_slots = [_slot_dt_mx(today_value, h, m) for h, m in UPDATE_TIMES_MX]
+
+    previous_slots = [slot for slot in today_slots if slot <= now_value]
+    if previous_slots:
+        last_slot = previous_slots[-1]
+    else:
+        yesterday_value = today_value - pd.Timedelta(days=1)
+        last_h, last_m = UPDATE_TIMES_MX[-1]
+        last_slot = _slot_dt_mx(yesterday_value, last_h, last_m)
+
+    future_slots = [slot for slot in today_slots if slot > now_value]
+    if future_slots:
+        next_slot = future_slots[0]
+    else:
+        tomorrow_value = today_value + pd.Timedelta(days=1)
+        first_h, first_m = UPDATE_TIMES_MX[0]
+        next_slot = _slot_dt_mx(tomorrow_value, first_h, first_m)
+
+    return last_slot, next_slot
+
+def schedule_browser_refresh_at_mx(next_slot: datetime) -> None:
+    try:
+        delay_ms = int(max(30, (next_slot - now_mx()).total_seconds()) * 1000) + 1500
+        components.html(
+            f"""
+            <script>
+            setTimeout(function() {{
+                window.parent.location.reload();
+            }}, {delay_ms});
+            </script>
+            """,
+            height=0,
+        )
+    except Exception:
+        pass
+
 # -------------------------------
 # THEME (READ ONLY — we do NOT force anything)
 # -------------------------------
@@ -49,8 +112,9 @@ except Exception:
 
 IS_DARK = str(theme_base).lower() == "dark"
 PLOTLY_TEMPLATE = "plotly_dark" if IS_DARK else "plotly_white"
-# ✅ Pylance safe default (Streamlit can stop early with st.stop(), but Pylance doesn't know that)
+# ✅ Pylance safe defaults (Streamlit can stop early with st.stop(), but Pylance doesn't know that)
 center_sel: list[str] = ["CC2", "JV"]
+metas: pd.DataFrame = pd.DataFrame(columns=["IDCenter", "Nivel", "Nombre", "Centro", "Meta", "Nombre_norm"])
 
 # -------------------------------
 # NEUTRAL, THEME-FRIENDLY CSS (no forced colors)
@@ -406,8 +470,8 @@ def _get_conn():
     )
     return pyodbc.connect(conn_str, autocommit=True)
 
-@st.cache_data(ttl=600, show_spinner=False)
-def read_sql(query: str) -> pd.DataFrame:
+@st.cache_data(ttl=DATA_REFRESH_TTL_SECONDS, show_spinner=False)
+def read_sql(query: str, refresh_slot_key: str = "") -> pd.DataFrame:
     conn = None
     try:
         conn = _get_conn()
@@ -431,8 +495,8 @@ def read_sql(query: str) -> pd.DataFrame:
 # -------------------------------
 # POWER QUERY → PANDAS (Consulta2)
 # -------------------------------
-@st.cache_data(ttl=3600, show_spinner=False)
-def load_empleados() -> pd.DataFrame:
+@st.cache_data(ttl=DATA_REFRESH_TTL_SECONDS, show_spinner=False)
+def load_empleados(refresh_slot_key: str = "") -> pd.DataFrame:
     q = r"""
     SELECT
       Region,
@@ -461,7 +525,7 @@ def load_empleados() -> pd.DataFrame:
         )
       )
     """
-    df = read_sql(q)
+    df = read_sql(q, refresh_slot_key=refresh_slot_key)
     df["Nombre"] = df["Nombre"].astype(str).str.strip()
     df["Jefe Inmediato"] = df["Jefe Inmediato"].astype(str).str.strip()
     df["Estatus"] = df["Estatus"].astype(str).str.strip()
@@ -493,10 +557,10 @@ def build_ventas_query(start_yyyymmdd: str, end_yyyymmdd: str) -> str:
     """
 
 
-@st.cache_data(ttl=600, show_spinner=False)
-def load_ventas(start_yyyymmdd: str, end_yyyymmdd: str) -> pd.DataFrame:
+@st.cache_data(ttl=DATA_REFRESH_TTL_SECONDS, show_spinner=False)
+def load_ventas(start_yyyymmdd: str, end_yyyymmdd: str, refresh_slot_key: str = "") -> pd.DataFrame:
     q = build_ventas_query(start_yyyymmdd, end_yyyymmdd)
-    df = read_sql(q)
+    df = read_sql(q, refresh_slot_key=refresh_slot_key)
 
     df["EJECUTIVO"] = df["EJECUTIVO"].astype(str).str.strip()
     df["CENTRO"] = df["CENTRO"].astype(str).str.strip()
@@ -694,7 +758,7 @@ def _metas_find_month_excel(ym_int: int) -> Path:
     candidates = sorted(candidates, key=_rank, reverse=True)
     return candidates[0]
 
-@st.cache_data(ttl=600, show_spinner=False)
+@st.cache_data(ttl=DATA_REFRESH_TTL_SECONDS, show_spinner=False)
 def _load_metas_excel_df(ym_int: int) -> pd.DataFrame:
     """
     Loads metas Excel for the selected month and auto-selects the sheet
@@ -1176,22 +1240,20 @@ def donut_compare_fig(labels: list[str], values: list[float], title: str, value_
 # -------------------------------
 st.sidebar.header("⚙️ Parámetros")
 
-# Refresh button
-if "last_refresh" not in st.session_state:
-    st.session_state["last_refresh"] = None
+# ✅ Fixed scheduled refreshes (Mexico City time)
+last_update_mx, next_update_mx = get_refresh_window_mx()
+refresh_slot_key = last_update_mx.strftime("%Y%m%d_%H%M")
+last_update_label_mx = last_update_mx.strftime("%d/%m/%Y %H:%M")
+next_update_label_mx = next_update_mx.strftime("%d/%m/%Y %H:%M")
 
-btn_cols = st.sidebar.columns([1, 1])
-with btn_cols[0]:
-    if st.button("🔄 Actualizar datos", use_container_width=True):
-        st.cache_data.clear()
-        st.cache_resource.clear()  # ✅ IMPORTANT: clears the cached pyodbc connection
-        st.session_state["last_refresh"] = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
-        st.rerun()
-with btn_cols[1]:
-    st.caption(f"🕒 {st.session_state['last_refresh']}" if st.session_state["last_refresh"] else "")
+st.sidebar.info(
+    f"🕒 Última actualización programada: {last_update_label_mx} CDMX\n\n"
+    f"Próxima actualización: {next_update_label_mx} CDMX"
+)
+schedule_browser_refresh_at_mx(next_update_mx)
 
-# ✅ Auto-detect today's date and use it as default "Fin"
-default_end_dt = date.today()
+# ✅ Auto-detect today's date in Mexico City and use it as default "Fin"
+default_end_dt = datetime.now(MEXICO_TZ).date()
 default_start_dt = (pd.Timestamp(default_end_dt.replace(day=1)) - pd.DateOffset(months=3)).date()
 
 d1, d2 = st.sidebar.columns(2)
@@ -1204,10 +1266,11 @@ if start_dt > end_dt:
 
 start_yyyymmdd = start_dt.strftime("%Y%m%d")
 end_yyyymmdd = end_dt.strftime("%Y%m%d")
+download_date_mx = datetime.now(MEXICO_TZ).date()
 
 with st.spinner("Cargando datos desde SQL Server…"):
-    empleados = load_empleados()
-    ventas_raw = load_ventas(start_yyyymmdd, end_yyyymmdd)
+    empleados = load_empleados(refresh_slot_key)
+    ventas_raw = load_ventas(start_yyyymmdd, end_yyyymmdd, refresh_slot_key)
     ventas = add_empleado_join(ventas_raw, empleados)
 
 
@@ -1310,7 +1373,7 @@ if sub_sel:
 
 from pathlib import Path
 
-@st.cache_data(ttl=600, show_spinner=False)
+@st.cache_data(ttl=DATA_REFRESH_TTL_SECONDS, show_spinner=False)
 def load_metas_from_csv(ym_int: int) -> dict:
     """Loads executive metas from the Excel of the selected month. Returns {EJ_NORM: meta}."""
     try:
@@ -1338,7 +1401,7 @@ def load_metas_from_csv(ym_int: int) -> dict:
         return {}
 
 
-@st.cache_data(ttl=600, show_spinner=False)
+@st.cache_data(ttl=DATA_REFRESH_TTL_SECONDS, show_spinner=False)
 def load_metas_supervisor_from_excel(ym_int: int) -> dict:
     """Loads supervisor metas from the Excel of the selected month. Returns {SUP_NORM: meta_sum}."""
     try:
@@ -1419,8 +1482,8 @@ def choose_backoffice_dt_html(df: pd.DataFrame, window_start: date, window_end: 
 # =========================================================
 # ✅ SINGLE CACHED FETCH FOR ALL TRANSITO & HTML DATA
 # =========================================================
-@st.cache_data(ttl=600, show_spinner=False)
-def fetch_programacion_history(end_date: date) -> pd.DataFrame:
+@st.cache_data(ttl=DATA_REFRESH_TTL_SECONDS, show_spinner=False)
+def fetch_programacion_history(end_date: date, refresh_slot_key: str = "") -> pd.DataFrame:
     """
     Trae la misma base necesaria para Interfaz Custom,
     pero con la misma limpieza y parsing usada en Transito Global 2.0
@@ -1444,7 +1507,7 @@ def fetch_programacion_history(end_date: date) -> pd.DataFrame:
     """
 
     try:
-        df = read_sql(q)
+        df = read_sql(q, refresh_slot_key=refresh_slot_key)
 
         if df.empty:
             return df
@@ -1782,13 +1845,13 @@ with tabs[0]:
         st.download_button(
             "⬇️ Descargar Excel (Global Mes)",
             data=build_excel_bytes(sheets_gm),
-            file_name=f"GlobalMes_{mes_sel}_{date.today():%Y%m%d}.xlsx",
+            file_name=f"GlobalMes_{mes_sel}_{download_date_mx:%Y%m%d}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             key=f"dl_global_mes_{mes_sel}",
             use_container_width=True,
         )
 
-        st.caption(f"🕒 Última actualización: {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}")
+        st.caption(f"🕒 Última actualización programada: {last_update_label_mx} CDMX")
 
     with colB:
         st.markdown("### ARPU")
@@ -2235,7 +2298,7 @@ with tabs[1]:
     st.download_button(
         "⬇️ Descargar Excel (Semanas)",
         data=build_excel_bytes(sheets_sem),
-        file_name=f"Semanas_{mes_sel}_{date.today():%Y%m%d}.xlsx",
+        file_name=f"Semanas_{mes_sel}_{download_date_mx:%Y%m%d}.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         key=f"dl_semanas_{mes_sel}",
         use_container_width=True,
@@ -2359,7 +2422,7 @@ with tabs[3]:
             dfA = dfA[dfA["SUBREGION"].isin(sub_sel)]
             dfB = dfB[dfB["SUBREGION"].isin(sub_sel)]
 
-        today_day = date.today().day
+        today_day = datetime.now(MEXICO_TZ).date().day
         dfA_m = cut_month_mode(dfA, modo, today_day)
         dfB_m = cut_month_mode(dfB, modo, today_day)
 
@@ -2763,7 +2826,7 @@ with tabs[4]:
     m_start, m_end = month_bounds(int(mes_sel))
     
     # ⚡ Load cached history instantly
-    prog_history = fetch_programacion_history(end_dt)
+    prog_history = fetch_programacion_history(end_dt, refresh_slot_key)
     
     transito_map = {}
     activadas_map = {}
@@ -2796,7 +2859,7 @@ with tabs[4]:
     # ------------------------------------------------
     # 2) Working days (Sanity logic)
     # ------------------------------------------------
-    today = date.today()
+    today = datetime.now(MEXICO_TZ).date()
 
     dias_hab_total_real = workable_equiv_between(m_start, m_end)
 
@@ -3317,7 +3380,7 @@ with tabs[4]:
         st.download_button(
             "⬇️ Descargar TAB 5 (Excel)",
             data=build_excel_bytes(sheets),
-            file_name=f"TAB5_Detalle_{mes_sel}_{date.today():%Y%m%d}.xlsx",
+            file_name=f"TAB5_Detalle_{mes_sel}_{download_date_mx:%Y%m%d}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             use_container_width=True,
             # ✅ key realmente único (evita colisiones si cambias filtros rápido)
@@ -3597,7 +3660,7 @@ with tabs[6]:
                 with grid[i % 2]:
                     st.plotly_chart(fig_team, width="stretch", key=f"top_team_{centro_equipo}_{normalize_name(sup)}_{i}")
 
-    st.caption(f"Día: {datetime.now().strftime('%d/%m/%Y')}")
+    st.caption(f"Día: {now_mx().strftime('%d/%m/%Y')}")
 
 # ======================================================
 # TAB 8: METAS
@@ -3849,7 +3912,7 @@ with tabs[7]:
                     st.markdown(f"**Alcanzado:** {fmt_int(achieved)}")
                     st.markdown(f"**FALTAN:** {fmt_int(faltan) if pd.notna(faltan) else '-'}")
 
-    st.caption(f"Día: {datetime.now().strftime('%d/%m/%Y')}")
+    st.caption(f"Día: {now_mx().strftime('%d/%m/%Y')}")
 
 # ======================================================
 # TAB 9: Tendencia x Ejecutivo
@@ -4499,12 +4562,12 @@ with tabs[9]:
     try:
         mes_sel_int = int(mes_sel)
     except Exception:
-        today = date.today()
+        today = datetime.now(MEXICO_TZ).date()
         mes_sel_int = today.year * 100 + today.month
         
     # ✅ 1. Determine Dynamic Interval based on Selected Month (NOT Sidebar start_dt/end_dt)
     m_start, m_end_full = month_bounds(mes_sel_int)
-    today_dt = date.today()
+    today_dt = datetime.now(MEXICO_TZ).date()
     
     if m_start <= today_dt <= m_end_full:
         m_end = today_dt
@@ -4922,7 +4985,7 @@ with tabs[9]:
     # ---------------------------------------------------------
     # ✅ LOAD PROGRAMACION BASE
     # ---------------------------------------------------------
-    prog_history = fetch_programacion_history(end_dt)
+    prog_history = fetch_programacion_history(end_dt, refresh_slot_key)
 
     # ✅ For En Transito traceability, use all fetched history instead of selected month only
     history_start = prog_history["Fecha_Creacion_DT"].min() if not prog_history.empty else m_start
